@@ -12,6 +12,19 @@ Nodeloom distributes *jobs*. It does not make a viewport or a game run faster
 across machines: GPU memory bandwidth is hundreds of GB/s while Thunderbolt or
 Ethernet is a few GB/s at best.
 
+## For the team
+
+| Document | What it is |
+|---|---|
+| [AGENTS.md](AGENTS.md) | Rules for people and every LLM tool (the single source; `CLAUDE.md` and `GEMINI.md` import it) |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to pick an issue, branch, test and open a PR |
+| [docs/STATUS.md](docs/STATUS.md) | What works, what is unverified, what is not started |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, protocol, scheduling, security model |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Decisions and the reasons behind them |
+
+Chat-based LLMs that cannot read the repository: paste the output of
+`python3 scripts/llm-context.py <area> [files...]`.
+
 ## Layout
 
 | Path | Purpose |
