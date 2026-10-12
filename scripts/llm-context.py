@@ -8,7 +8,7 @@ the output of this script instead.
     python3 scripts/llm-context.py ui apps/desktop/src/App.svelte > context.md
 
 Arguments are area names (see AREAS) or file paths relative to the repo root.
-AGENTS.md and docs/STATUS.md are always included.
+AGENTS.md, docs/STRATEGY.md and docs/STATUS.md are always included.
 """
 
 import sys
@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-ALWAYS = ["AGENTS.md", "docs/STATUS.md"]
+ALWAYS = ["AGENTS.md", "docs/STRATEGY.md", "docs/STATUS.md"]
 
 AREAS = {
     "core": ["docs/ARCHITECTURE.md", "crates/nodeloom-proto/src/lib.rs", "crates/nodeloom-core/src/lib.rs",

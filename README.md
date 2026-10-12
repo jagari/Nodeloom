@@ -1,21 +1,27 @@
 # Nodeloom
 
-Pool the Macs and PCs you already own into one small render/build cluster.
-Nodeloom splits a job (today: a Blender frame range) across machines on your
-network, and shows every machine's load and every task's progress in one place.
+See what your home or team LLM cluster is actually doing. Nodeloom runs a small
+agent on each Mac, Windows or Linux machine and shows, in one desktop app, which
+models are loaded where, how busy each GPU is, and why a multi-machine setup is
+slow or broken, whichever engine you use (Ollama, llama.cpp, exo).
 
-> **Status: early development.** Nothing here is released yet.
+> **Status: early development, direction just changed.** The current code
+> pools machines and distributes Blender frame ranges; that feature is on hold.
+> Observability for local AI clusters is the next milestone. See
+> [docs/STRATEGY.md](docs/STRATEGY.md).
 
 ## What it is not
 
-Nodeloom distributes *jobs*. It does not make a viewport or a game run faster
-across machines: GPU memory bandwidth is hundreds of GB/s while Thunderbolt or
-Ethernet is a few GB/s at best.
+- Not an inference engine, and it will not make inference faster. Links between
+  machines (a few GB/s) are far slower than GPU memory (tens to hundreds of
+  GB/s); Nodeloom saves setup time and helps find faults instead.
+- Agents never run arbitrary commands.
 
 ## For the team
 
 | Document | What it is |
 |---|---|
+| [docs/STRATEGY.md](docs/STRATEGY.md) | Who it is for, how it differs, roadmap (read first) |
 | [AGENTS.md](AGENTS.md) | Rules for people and every LLM tool (the single source; `CLAUDE.md` and `GEMINI.md` import it) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to pick an issue, branch, test and open a PR |
 | [docs/STATUS.md](docs/STATUS.md) | What works, what is unverified, what is not started |

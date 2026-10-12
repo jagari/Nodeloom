@@ -1,13 +1,16 @@
 # AGENTS.md: Nodeloom 작업 규칙 (사람과 LLM 공통)
 
 이 파일은 팀과 모든 LLM 도구가 함께 쓰는 **규칙의 원본**이다. `CLAUDE.md`와 `GEMINI.md`는 이 파일을 가져오기만 한다.
-규칙을 바꾸려면 이 파일을 PR로 고친다. 배경과 이유는 `docs/DECISIONS.md`, 현재 진행도는 `docs/STATUS.md`를 본다.
+규칙을 바꾸려면 이 파일을 PR로 고친다. 누구를 위해 무엇을 만드는지는 `docs/STRATEGY.md`, 배경과 이유는 `docs/DECISIONS.md`, 현재 진행도는 `docs/STATUS.md`를 본다.
 
 ## 프로젝트 한 줄 요약
 
-사용자가 이미 가진 맥·윈도우 기기를 LAN/Thunderbolt로 묶어, **작업 단위로 나눌 수 있는 일**(지금은 Blender 프레임 렌더링)을 여러 기기에 분배하고, 기기 상태와 진행률을 한 화면에서 보여주는 도구다. 오픈코어(Apache-2.0 코어 + 유료 Pro)로 사업화한다.
+여러 대의 맥·윈도우·리눅스 기기로 로컬 LLM을 돌리는 사람을 위해, 어떤 엔진(Ollama, llama.cpp, exo)을 쓰든 **"지금 무엇이 어디서 돌고, 왜 느리고, 어디가 고장 났는지"를 한 화면에서 보여주는 관측·진단 도구**다. 목표는 실사용자와 포트폴리오이며, 수익화는 보류했다(`docs/DECISIONS.md` D11). 기능 아이디어가 `docs/STRATEGY.md`와 맞지 않으면 만들지 않는다.
 
-**범위 밖**: 실시간 뷰포트, 게임 실행 fps 가속. 기기 간 연결(Thunderbolt 약 5GB/s)이 GPU 메모리 대역폭(수십~수백 GB/s)보다 훨씬 느리기 때문이다. 이런 기능을 제안하거나 구현하지 않는다.
+**범위 밖** (제안하거나 구현하지 않는다):
+- 추론 엔진 자체를 만드는 일, 추론 속도를 올려 준다는 주장. 기기 간 연결(Thunderbolt 약 5GB/s)이 GPU 메모리 대역폭(수십~수백 GB/s)보다 훨씬 느린 물리 한계는 관측 도구로 해결되지 않는다.
+- 임의 코드 실행. 엔진을 고정 설정으로 실행하는 기능(로드맵 P2)도 팀 결정 전에는 만들지 않는다.
+- 실시간 뷰포트·게임 fps 가속, Blender 분산 렌더의 신규 기능(보류).
 
 ## 구조 지도
 
@@ -17,13 +20,13 @@
 | `crates/nodeloom-core` | 프레임 분할, `Runner` 트레이트, 자원 수집, 토큰 비교, 작업 검증, mDNS | A |
 | `crates/nodeloom-master` | 클러스터 상태, 스케줄링·재배정, HTTP/WebSocket API | A |
 | `crates/nodeloom-agent` | 각 기기에서 도는 데몬: 접속, 자원 보고, 작업 실행 | B |
-| `crates/nodeloom-runner-blender` | `blender -b`로 프레임 범위 렌더 | B |
+| `crates/nodeloom-runner-blender` | `blender -b`로 프레임 범위 렌더. 러너 구조의 예시로 남긴 **보류 코드**(신규 기능 없음) | B |
 | `apps/desktop/src` | 데스크톱 UI (Svelte 5 + TypeScript) | C |
 | `apps/desktop/src-tauri` | Tauri 데스크톱 셸(워크스페이스와 별도 빌드) | D |
 | `.github/workflows` | CI | D |
 | `docs/` | 아키텍처·결정·진행도 문서 | E (모두 갱신) |
 
-역할: A 총괄·코어 리뷰, B 에이전트·러너, C 데스크톱 UI, D 배포·실기기 검증, E 문서·사업화·QA. 자세한 구조는 `docs/ARCHITECTURE.md`.
+역할: A 총괄·코어 리뷰, B 에이전트(GPU 지표·엔진 어댑터), C 데스크톱 UI, D 배포·실기기 검증(dogfooding 클러스터), E 문서·사용자 검증·QA. 자세한 구조는 `docs/ARCHITECTURE.md`.
 
 ## 절대 규칙
 
