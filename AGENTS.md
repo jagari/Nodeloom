@@ -52,6 +52,8 @@ pnpm dev            # http://localhost:5173
 cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
+CI는 **항상 최신 stable Rust**를 쓴다. 로컬 Rust가 오래되면 로컬에서는 통과한 clippy가 CI에서 실패할 수 있으니, 작업 전에 `rustup update stable`을 실행한다.
+
 한 기기에서 전체 흐름 실행:
 
 ```sh

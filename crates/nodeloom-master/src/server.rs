@@ -94,16 +94,16 @@ async fn post_job(
     headers: HeaderMap,
     Query(query): Query<TokenQuery>,
     Json(request): Json<SubmitJob>,
-) -> Result<Json<JobView>, Response> {
+) -> Result<Json<JobView>, (StatusCode, String)> {
     if !authorized(&cluster, &headers, &query) {
-        return Err(StatusCode::UNAUTHORIZED.into_response());
+        return Err((StatusCode::UNAUTHORIZED, String::new()));
     }
     cluster.submit_job(request.payload).map(Json).map_err(|e| {
         let status = match e {
             SubmitError::Invalid(_) => StatusCode::BAD_REQUEST,
             SubmitError::NoCapableNodes(_) => StatusCode::CONFLICT,
         };
-        (status, e.to_string()).into_response()
+        (status, e.to_string())
     })
 }
 

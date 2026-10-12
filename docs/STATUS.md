@@ -27,4 +27,6 @@
 
 - Rust: 41개 (proto 4, core 15, Blender 러너 4, master 단위 11, master 통합 7)
 - UI: 19개 (`apps/desktop/src/lib/*.test.ts`)
-- CI: `.github/workflows/ci.yml`에 설정만 작성함. GitHub에서 실제로 돌았는지는 Actions 탭에서 확인한다.
+- CI: GitHub Actions에서 실행 중이다(Rust 3개 OS, UI, 데스크톱 셸 3개 OS).
+  - 첫 실행(`c7090cf`)에서 Rust 작업이 실패했다. CI의 Rust 1.99 clippy가 새로 잡는 `result_large_err` 경고 때문이었고, 수정했다.
+  - 데스크톱 셸은 맥·윈도우·리눅스에서 **빌드만** 성공했고, 실행은 확인하지 않았다.
