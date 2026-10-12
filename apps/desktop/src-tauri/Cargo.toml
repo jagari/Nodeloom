@@ -1,0 +1,16 @@
+[package]
+name = "nodeloom-desktop"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "nodeloom_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = "2.7.2"
+
+[dependencies]
+tauri = "2.12.3"

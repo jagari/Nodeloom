@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# The Tauri shell builds separately (own lockfile and target dir) so that
+# `cargo test --workspace` does not need GUI system libraries.
+exclude = ["apps/desktop/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

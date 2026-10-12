@@ -18,7 +18,10 @@ use axum::{
         DefaultBodyLimit, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
+    http::{
+        HeaderMap, Method, StatusCode,
+        header::{AUTHORIZATION, CONTENT_TYPE},
+    },
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -28,6 +31,7 @@ use nodeloom_proto::{
 };
 use serde::Deserialize;
 use tokio::{net::TcpListener, sync::mpsc};
+use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
 use crate::state::{Cluster, SubmitError};
@@ -43,6 +47,14 @@ pub fn router(cluster: Arc<Cluster>) -> Router {
         .route("/ws/ui", get(ws_ui))
         .route("/ws/agent", get(ws_agent))
         .layer(DefaultBodyLimit::max(64 * 1024))
+        // UIs run on other origins (Tauri webview, dev server). Auth is a
+        // bearer token rather than cookies, so any origin may call the API.
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods([Method::GET, Method::POST])
+                .allow_headers([AUTHORIZATION, CONTENT_TYPE]),
+        )
         .with_state(cluster)
 }
 

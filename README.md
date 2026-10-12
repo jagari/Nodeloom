@@ -21,20 +21,45 @@ Ethernet is a few GB/s at best.
 | `crates/nodeloom-agent` | Daemon that runs on every machine |
 | `crates/nodeloom-master` | Cluster state, scheduling, HTTP/WebSocket API |
 | `crates/nodeloom-runner-blender` | Runs `blender -b` for a frame range |
-| `apps/desktop` | Tauri UI (planned) |
+| `apps/desktop` | Tauri desktop UI (Svelte + TypeScript), a client of the master's API |
 
 ## Security model
 
 Agents never accept arbitrary commands. A task is a fixed enum of known work
 (`TaskPayload`), and every connection must present the master's pairing token.
 
+## Try it on one machine
+
+```sh
+cargo build
+export NODELOOM_TOKEN=dev-token
+
+./target/debug/nodeloom-master --bind 127.0.0.1:7878 --no-mdns &
+./target/debug/nodeloom-agent --master 127.0.0.1:7878 --enable-fake-runner &
+
+cd apps/desktop && pnpm install && pnpm dev   # open http://localhost:5173
+```
+
+Connect to `127.0.0.1:7878` with token `dev-token`. On a real cluster, run the
+master on one machine and an agent on each machine; agents find the master via
+mDNS when `--master` is omitted. Traffic is plain HTTP/WebSocket for now, so
+use it only on a network you trust.
+
 ## Development
 
 ```sh
-cargo fmt --check
+cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+
+cd apps/desktop
+pnpm check && pnpm test && pnpm build
+# Desktop shell (needs the Tauri system libraries, see tauri.app/start/prerequisites):
+cargo build --manifest-path src-tauri/Cargo.toml
 ```
+
+`apps/desktop/src/lib/types.ts` mirrors `crates/nodeloom-proto` by hand; keep
+the two in sync when a message changes.
 
 ## License
 

@@ -327,3 +327,27 @@ async fn work_moves_to_another_agent_when_one_disappears() {
             .all(|t| t.node.as_ref().unwrap().0 == "b")
     );
 }
+
+#[tokio::test]
+async fn cors_preflight_allows_authorized_ui_requests() {
+    let h = start_master().await;
+    let response = reqwest::Client::new()
+        .request(reqwest::Method::OPTIONS, format!("{}/api/jobs", h.base))
+        .header("Origin", "http://localhost:5173")
+        .header("Access-Control-Request-Method", "POST")
+        .header(
+            "Access-Control-Request-Headers",
+            "authorization,content-type",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success(), "{}", response.status());
+    let headers = response.headers();
+    assert_eq!(headers["access-control-allow-origin"], "*");
+    let allowed = headers["access-control-allow-headers"]
+        .to_str()
+        .unwrap()
+        .to_lowercase();
+    assert!(allowed.contains("authorization") && allowed.contains("content-type"));
+}
