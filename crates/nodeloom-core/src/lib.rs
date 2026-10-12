@@ -3,8 +3,10 @@
 //! master crates.
 
 pub mod auth;
+pub mod discovery;
 pub mod metrics;
 pub mod runner;
 pub mod split;
+pub mod validate;
 
 pub use runner::{FakeRunner, Runner, RunnerError, RunnerSet};

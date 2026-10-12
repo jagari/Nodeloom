@@ -38,6 +38,10 @@ impl MetricsCollector {
     }
 }
 
+pub fn hostname() -> String {
+    System::host_name().unwrap_or_else(|| "unknown".into())
+}
+
 /// Describes this machine. `id` is supplied by the caller so it stays stable
 /// across restarts (the agent persists it).
 pub fn describe_node(id: NodeId, runners: Vec<RunnerKind>) -> NodeInfo {
@@ -46,7 +50,7 @@ pub fn describe_node(id: NodeId, runners: Vec<RunnerKind>) -> NodeInfo {
     sys.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
     NodeInfo {
         id,
-        hostname: System::host_name().unwrap_or_else(|| "unknown".into()),
+        hostname: hostname(),
         os: System::long_os_version().unwrap_or_else(|| std::env::consts::OS.into()),
         arch: std::env::consts::ARCH.into(),
         cpu_cores: sys.cpus().len().max(1),

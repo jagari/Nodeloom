@@ -102,6 +102,27 @@ impl TaskPayload {
         }
     }
 
+    /// Copy of this payload restricted to the inclusive range `start..=end`.
+    pub fn with_frames(&self, start: u32, end: u32) -> TaskPayload {
+        let mut copy = self.clone();
+        match &mut copy {
+            TaskPayload::Fake {
+                frame_start,
+                frame_end,
+                ..
+            }
+            | TaskPayload::Blender {
+                frame_start,
+                frame_end,
+                ..
+            } => {
+                *frame_start = start;
+                *frame_end = end;
+            }
+        }
+        copy
+    }
+
     pub fn frame_count(&self) -> u32 {
         let (start, end) = self.frames();
         end.saturating_sub(start) + 1
@@ -219,6 +240,23 @@ mod tests {
     fn unknown_runner_is_rejected_not_executed() {
         let json = r#"{"runner":"shell","command":"rm -rf /"}"#;
         assert!(serde_json::from_str::<TaskPayload>(json).is_err());
+    }
+
+    #[test]
+    fn with_frames_keeps_other_fields() {
+        let p = TaskPayload::Blender {
+            blend_file: "a.blend".into(),
+            frame_start: 1,
+            frame_end: 100,
+        };
+        assert_eq!(
+            p.with_frames(10, 20),
+            TaskPayload::Blender {
+                blend_file: "a.blend".into(),
+                frame_start: 10,
+                frame_end: 20,
+            }
+        );
     }
 
     #[test]
