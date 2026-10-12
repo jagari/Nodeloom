@@ -56,3 +56,16 @@
 - **결정**: 할 일과 담당자는 GitHub Issues로 관리한다. 팀과 LLM이 공유할 규칙·배경은 저장소 파일(`AGENTS.md`, `docs/`)에 둔다.
 - **이유**: 팀원 5명이 서로 다른 LLM 도구(Claude, ChatGPT, Codex, Gemini)를 쓴다. 채팅 기록은 공유되지 않으므로 저장소가 유일한 공통 기준이어야 한다.
 - **영향**: 규칙 원본은 `AGENTS.md` 하나이고, `CLAUDE.md`와 `GEMINI.md`는 그것을 가져온다. 채팅형 도구에는 `scripts/llm-context.py` 출력을 붙여 넣는다.
+
+## D10. 경쟁 조사 정정: 직접 경쟁 제품이 있다 (2026-10-12)
+
+- **결정**: "개인이 가진 기기를 묶는 도구는 비어 있는 영역"이라는 이전 판단을 철회한다. 기능 개발보다 사용자 인터뷰(이슈 #11)를 먼저 해서 계속할지 방향을 바꿀지 정한다.
+- **이유**: 처음 조사에서 다음 제품들을 놓쳤다.
+  - **CrowdRender**: 사용자의 노트북·데스크톱을 묶어 렌더하는 Blender 애드온. 한 프레임 분할을 지원하고, 무료 오픈소스판과 유료판이 있다. 판매처마다 가격 표기가 다르다. ([Superhive](https://superhivemarket.com/products/distributed-rendering-addon), 2026-10-12 확인)
+  - **SheepIt**: 무료 커뮤니티 렌더팜. ([gamedev.tv](https://gamedev.tv/articles/using-sheepit-render-farm), [Arch Wiki](https://wiki.archlinux.org/title/Sheepit), 2026-10-12 확인)
+  - 클라우드 렌더팜도 판매자 계산으로 RTX 5090에서 4분 걸리는 프레임이 약 $0.21이다. 개인 규모 작업에서 "비용 절감"은 강한 이유가 되기 어렵다. ([Super Renders Farm](https://superrendersfarm.com/article/render-farm-cost-per-frame-breakdown-2026), 판매자 자료)
+- **영향**:
+  - D-Lab 수행계획서의 국내외 현황·차별성을 고쳤다. 차별성은 이미 가진 장점이 아니라 "검증할 가설"로 표현한다.
+  - CrowdRender 대비 부족한 점을 이슈로 남겼다: 한 프레임 분할, 기기 성능 가중치 분할.
+  - D6(오픈코어 수익 모델)과 가격 가설은 인터뷰 결과가 나올 때까지 보류한다.
+  - 방향 전환 후보 조사는 `docs/research/`에 정리한다.
