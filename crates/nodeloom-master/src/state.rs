@@ -332,10 +332,11 @@ impl Cluster {
         &self.settings
     }
 
-    /// Token for the dashboard API (and, optionally, for agents to skip
-    /// approval).
-    pub fn admin_token(&self) -> &str {
-        &self.admin_token
+    /// Checks the dashboard's admin token (also what agents may send to skip
+    /// approval). An empty admin token matches nothing, so a blank setting
+    /// can never open the cluster.
+    pub fn admin_token_matches(&self, provided: &str) -> bool {
+        !self.admin_token.trim().is_empty() && tokens_match(&self.admin_token, provided)
     }
 
     /// Fires whenever the snapshot changes.
@@ -388,7 +389,7 @@ impl Cluster {
             return Admission::Rejected(format!("this key is already paired as {other}"));
         }
         if let Some(token) = token {
-            return if tokens_match(&self.admin_token, token) {
+            return if self.admin_token_matches(token) {
                 Admission::ApproveWithToken
             } else {
                 Admission::Rejected("wrong token".into())
@@ -398,8 +399,12 @@ impl Cluster {
             return Admission::Rejected(IGNORED.into());
         }
 
-        // The same machine reconnecting replaces its own older request.
+        // The same machine reconnecting replaces its own older request but
+        // keeps its place in the list, so reconnecting cannot shuffle the
+        // cards under the cursor of someone about to click Approve.
+        let mut seq = None;
         if let Some(old) = inner.pending.remove(key) {
+            seq = Some(old.seq);
             old.decide(Decision::Rejected(
                 "replaced by a newer connection from this machine".into(),
             ));
@@ -426,8 +431,10 @@ impl Cluster {
             return Admission::Rejected("too many machines are waiting for approval".into());
         }
 
-        inner.next_pending += 1;
-        let seq = inner.next_pending;
+        let seq = seq.unwrap_or_else(|| {
+            inner.next_pending += 1;
+            inner.next_pending
+        });
         let (decision, receiver) = oneshot::channel();
         inner.pending.insert(
             key.to_owned(),
@@ -492,6 +499,10 @@ impl Cluster {
 
     /// Refuses a waiting machine until the master restarts.
     pub fn ignore(&self, public_key: &str) -> Result<(), PairError> {
+        // Taken like approve does, so an approval already being saved
+        // finishes first and this then answers "not found" instead of both
+        // calls reporting success.
+        let _store = self.lock_store();
         let mut inner = self.lock();
         let entry = inner
             .pending
@@ -1023,6 +1034,16 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_admin_token_matches_nothing() {
+        let cluster = Cluster::new("");
+        assert!(!cluster.admin_token_matches(""));
+        assert!(matches!(
+            cluster.classify(&node("a", &[]), &new_key(), Some(""), None),
+            Admission::Rejected(_)
+        ));
+    }
+
+    #[test]
     fn token_decides_without_waiting() {
         let cluster = Cluster::new("admin");
         let info = node("a", &[]);
@@ -1105,9 +1126,16 @@ mod tests {
         else {
             panic!()
         };
+        let k0 = new_key();
+        let _other = cluster.classify(&node("z", &[]), &k0, None, ip(20));
         let _new = cluster.classify(&node("a", &[]), &key, None, ip(9));
         assert!(matches!(old.try_recv(), Ok(Decision::Rejected(_))));
-        assert_eq!(pending_keys(&cluster), [key.as_hex()]);
+        assert_eq!(
+            pending_keys(&cluster),
+            [key.as_hex(), k0.as_hex()],
+            "a reconnect keeps its place"
+        );
+        drop(_other);
 
         // Two more from the same address push the oldest out.
         let (k2, k3) = (new_key(), new_key());

@@ -17,6 +17,15 @@ export function pairedRows(devices: PairedDevice[], nodes: NodeView[]): PairedRo
 }
 
 /**
+ * A name as people read it: compatibility forms folded (full-width letters,
+ * ligatures), spacing collapsed, case ignored. Lookalike letters from other
+ * scripts are not caught.
+ */
+export function sameName(name: string): string {
+  return name.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/**
  * Why a waiting request deserves a second look, keyed by public key. Two
  * requests that look alike may mean someone is imitating a real machine, so
  * the person approving should check the code on the machine itself.
@@ -28,9 +37,9 @@ export function lookalikes(pending: PendingDevice[], devices: PairedDevice[]): M
     return counts;
   };
   const codes = count(pending.map((p) => p.code));
-  const hosts = count(pending.map((p) => p.info.hostname));
+  const hosts = count(pending.map((p) => sameName(p.info.hostname)));
   const ids = count(pending.map((p) => p.info.id));
-  const pairedNames = new Set(devices.map((d) => d.name));
+  const pairedNames = new Set(devices.map((d) => sameName(d.name)));
 
   const reasons = new Map<string, string>();
   for (const p of pending) {
@@ -39,9 +48,9 @@ export function lookalikes(pending: PendingDevice[], devices: PairedDevice[]): M
         ? 'Another waiting machine shows the same code.'
         : (ids.get(p.info.id) ?? 0) > 1
           ? 'Another waiting machine uses the same id.'
-          : (hosts.get(p.info.hostname) ?? 0) > 1
+          : (hosts.get(sameName(p.info.hostname)) ?? 0) > 1
             ? 'Another waiting machine has the same name.'
-            : pairedNames.has(p.info.hostname)
+            : pairedNames.has(sameName(p.info.hostname))
               ? 'A paired machine already has this name.'
               : null;
     if (reason) reasons.set(p.public_key, reason);

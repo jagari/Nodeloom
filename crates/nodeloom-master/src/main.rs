@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use nodeloom_core::{discovery, metrics::hostname};
 use nodeloom_master::{Cluster, DeviceStore, load_admin_token, serve};
@@ -50,7 +50,20 @@ async fn main() -> Result<()> {
             .join("master"),
     };
     let store = DeviceStore::open(&data_dir)?;
+    // Bind before touching the admin token: a second master started with
+    // --rotate-admin-token while the first still runs must fail without
+    // rotating, or the file would hold a token the running master rejects.
+    let listener = TcpListener::bind(args.bind)
+        .await
+        .with_context(|| format!("binding {}", args.bind))?;
+    let addr = listener.local_addr()?;
+
     let token = match args.token {
+        // clap passes an empty NODELOOM_TOKEN through; a blank admin token
+        // would let anyone in.
+        Some(token) if token.trim().is_empty() => {
+            bail!("--token / NODELOOM_TOKEN is empty; unset it to use the saved admin token")
+        }
         Some(token) => token,
         None => {
             let (token, created) = load_admin_token(&data_dir, args.rotate_admin_token)
@@ -67,11 +80,6 @@ async fn main() -> Result<()> {
         }
     };
     let cluster = Arc::new(Cluster::with_store(token, store));
-
-    let listener = TcpListener::bind(args.bind)
-        .await
-        .with_context(|| format!("binding {}", args.bind))?;
-    let addr = listener.local_addr()?;
     info!(
         "listening on {addr}; paired machines in {}",
         data_dir.display()

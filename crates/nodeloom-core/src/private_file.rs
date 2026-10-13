@@ -7,14 +7,16 @@
 //! other users cannot read by default.
 
 use std::{
+    ffi::OsString,
     fs::{self, File, OpenOptions},
     io::{self, Write},
-    path::Path,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 fn options() -> OpenOptions {
     let mut options = OpenOptions::new();
-    options.write(true);
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -35,35 +37,71 @@ pub fn create_private_dir(dir: &Path) -> io::Result<()> {
     builder.create(dir)
 }
 
-fn write_all_synced(mut file: File, contents: &[u8]) -> io::Result<()> {
-    file.write_all(contents)?;
-    file.sync_all()
+/// A complete, synced, owner-only copy of `contents` next to `path`, under a
+/// name no other writer uses. Readers never see it half-written because it
+/// only appears under `path` through a link or rename.
+fn write_temp(path: &Path, contents: &[u8]) -> io::Result<PathBuf> {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let mut name = OsString::from(path.as_os_str());
+    name.push(format!(
+        ".tmp-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let tmp = PathBuf::from(name);
+    let result = options().open(&tmp).and_then(|mut file: File| {
+        file.write_all(contents)?;
+        file.sync_all()
+    });
+    match result {
+        Ok(()) => Ok(tmp),
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
+/// Makes a rename or link durable: on Unix the directory entry is only on
+/// disk once the directory itself is synced. Windows cannot open
+/// directories as files, and NTFS journals the rename.
+fn sync_parent(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        let dir = if parent.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            parent
+        };
+        File::open(dir)?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
 }
 
 /// Writes a new owner-only file. Fails with `AlreadyExists` instead of
 /// replacing, so two processes racing to create the same identity cannot
-/// both win.
+/// both win, and the loser never reads a half-written file: the content is
+/// complete before the hard link makes it visible.
 pub fn write_new(path: &Path, contents: &[u8]) -> io::Result<()> {
-    let file = options().create_new(true).open(path)?;
-    write_all_synced(file, contents).inspect_err(|_| {
-        let _ = fs::remove_file(path);
-    })
+    let tmp = write_temp(path, contents)?;
+    let linked = fs::hard_link(&tmp, path);
+    let _ = fs::remove_file(&tmp);
+    linked?;
+    sync_parent(path)
 }
 
 /// Replaces `path` atomically: readers see either the old or the new file,
-/// never a half-written one, even if the process dies mid-write.
+/// never a half-written one, even if the process or the machine dies
+/// mid-write.
 pub fn replace(path: &Path, contents: &[u8]) -> io::Result<()> {
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = Path::new(&tmp);
-    // A leftover from a crash may have other permissions; start fresh so
-    // the mode below applies.
-    match fs::remove_file(tmp) {
-        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
-        _ => {}
+    let tmp = write_temp(path, contents)?;
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
     }
-    write_all_synced(options().create_new(true).open(tmp)?, contents)?;
-    fs::rename(tmp, path)
+    sync_parent(path)
 }
 
 #[cfg(test)]
@@ -78,6 +116,35 @@ mod tests {
         let err = write_new(&path, b"two").unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read(&path).unwrap(), b"one");
+    }
+
+    #[test]
+    fn racing_writers_see_one_winner_and_never_an_empty_file() {
+        for _ in 0..50 {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("identity");
+            let barrier = std::sync::Barrier::new(2);
+            let outcomes: Vec<_> = std::thread::scope(|scope| {
+                let handles: Vec<_> = [b"first".as_slice(), b"second".as_slice()]
+                    .into_iter()
+                    .map(|contents| {
+                        let (path, barrier) = (&path, &barrier);
+                        scope.spawn(move || {
+                            barrier.wait();
+                            let result = write_new(path, contents);
+                            // Whoever lost must find complete contents.
+                            (result.is_ok(), fs::read(path).unwrap())
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            assert_eq!(outcomes.iter().filter(|(won, _)| *won).count(), 1);
+            for (_, seen) in outcomes {
+                assert!(seen == b"first" || seen == b"second", "{seen:?}");
+            }
+            assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1, "temp left");
+        }
     }
 
     #[test]

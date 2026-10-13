@@ -10,14 +10,13 @@
   let { rows, live, remove }: Props = $props();
 
   let busy = $state<NodeId | null>(null);
+  /** Machine whose removal waits for a second click (not window.confirm(),
+   * which the macOS webview always answers with false). */
+  let confirming = $state<NodeId | null>(null);
   let error = $state('');
 
   async function onremove(row: PairedRow) {
-    const ok = confirm(
-      `Remove ${row.name}?\n\nIt is disconnected now and its key is refused from then on. ` +
-        'To add it again, run "nodeloom-agent reset-identity" on it and approve it here.',
-    );
-    if (!ok) return;
+    confirming = null;
     busy = row.id;
     error = '';
     try {
@@ -48,10 +47,25 @@
           {row.online ? 'Online' : 'Offline'}
         </span>
         <span class="name">{row.name}</span>
-        <button class="btn" disabled={!live || busy !== null} onclick={() => onremove(row)}>
-          {busy === row.id ? 'Removing…' : 'Remove'}
-        </button>
+        {#if confirming === row.id}
+          <button class="btn" onclick={() => (confirming = null)}>Cancel</button>
+          <button class="btn danger" disabled={!live || busy !== null} onclick={() => onremove(row)}>
+            Remove for good
+          </button>
+        {:else}
+          <button class="btn" disabled={!live || busy !== null} onclick={() => (confirming = row.id)}>
+            {busy === row.id ? 'Removing…' : 'Remove'}
+          </button>
+        {/if}
       </li>
+      {#if confirming === row.id}
+        <li class="explain muted">
+          {row.name} is disconnected now and its key is refused from then on. To add it again, run
+          <code>nodeloom-agent reset-identity</code> on it and approve it here. If it was started with
+          <code>--token</code>, that machine also holds the admin token: rotate it with
+          <code>nodeloom-master --rotate-admin-token</code>.
+        </li>
+      {/if}
     {/each}
   </ul>
 </section>
@@ -95,6 +109,21 @@
     flex: 1;
     min-width: 0;
     overflow-wrap: anywhere;
+  }
+  .explain {
+    display: block;
+    border-top: none;
+    padding-top: 0;
+    font-size: 13px;
+  }
+  .btn.danger {
+    color: var(--critical);
+    font-weight: 600;
+  }
+  code {
+    background: var(--page);
+    padding: 1px 5px;
+    border-radius: 4px;
   }
   .problem {
     display: flex;

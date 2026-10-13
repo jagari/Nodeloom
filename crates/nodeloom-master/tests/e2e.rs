@@ -567,9 +567,11 @@ async fn browser_pages_cannot_open_the_agent_socket() {
 
 #[tokio::test]
 async fn silent_pending_connections_are_dropped() {
+    // Generous margins: a live peer answers within a few milliseconds, but
+    // CI machines can stall for a few hundred.
     let cluster = Cluster::new(TOKEN).with_settings(Settings {
-        ping_interval: Duration::from_millis(50),
-        pending_idle_timeout: Duration::from_millis(200),
+        ping_interval: Duration::from_millis(100),
+        pending_idle_timeout: Duration::from_secs(1),
         ..Settings::default()
     });
     let h = start(cluster).await;
@@ -587,7 +589,7 @@ async fn silent_pending_connections_are_dropped() {
         })
         .await;
     assert_eq!(snap.pending.len(), 1);
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    tokio::time::sleep(Duration::from_millis(2500)).await;
     assert_eq!(h.state().await.pending.len(), 1, "live request kept");
     reader.abort();
 }

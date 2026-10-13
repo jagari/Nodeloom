@@ -34,8 +34,8 @@
 
 ## 테스트 현황
 
-- Rust: 83개 (proto 5, core 25, agent 4, Blender 러너 4, master 단위 26, master 통합 19)
-- UI: 27개 (`apps/desktop/src/lib/*.test.ts`)
+- Rust: 87개 (proto 5, core 27, agent 5, Blender 러너 4, master 단위 27, master 통합 19)
+- UI: 28개 (`apps/desktop/src/lib/*.test.ts`)
 - CI: GitHub Actions에서 실행 중이다(Rust 3개 OS, UI, 데스크톱 셸 3개 OS).
   - 첫 실행(`c7090cf`)에서 Rust 작업이 실패했다. CI의 Rust 1.99 clippy가 새로 잡는 `result_large_err` 경고 때문이었고, 수정했다.
   - 데스크톱 셸은 맥·윈도우·리눅스에서 **빌드만** 성공했고, 실행은 확인하지 않았다.

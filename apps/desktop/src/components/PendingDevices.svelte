@@ -13,17 +13,19 @@
   let { pending, flags, live, approve, ignore }: Props = $props();
 
   let busy = $state<string | null>(null);
+  /** Request whose approval waits for a second click. */
+  let confirming = $state<string | null>(null);
   let errors = $state<Record<string, string>>({});
 
+  // A two-step button in the card instead of window.confirm(): the macOS
+  // webview answers confirm() with false, and the card itself shows which
+  // machine (code, address) the second click approves.
   async function act(request: PendingDevice, kind: 'approve' | 'ignore') {
-    const flag = flags.get(request.public_key);
-    if (
-      kind === 'approve' &&
-      flag &&
-      !confirm(`${flag}\n\nApprove ${request.info.hostname} anyway? Check the code on the machine itself first.`)
-    ) {
+    if (kind === 'approve' && flags.has(request.public_key) && confirming !== request.public_key) {
+      confirming = request.public_key;
       return;
     }
+    confirming = null;
     busy = request.public_key;
     errors = { ...errors, [request.public_key]: '' };
     try {
@@ -60,12 +62,25 @@
         {#if error}
           <p class="note bad" role="alert">{error}</p>
         {/if}
-        <div class="actions">
-          <button class="btn" disabled={!live || busy !== null} onclick={() => act(request, 'ignore')}>Ignore</button>
-          <button class="btn primary" disabled={!live || busy !== null} onclick={() => act(request, 'approve')}>
-            {busy === request.public_key ? 'Working…' : 'Approve'}
-          </button>
-        </div>
+        {#if confirming === request.public_key}
+          <p class="note warn" role="status">
+            Approve {request.info.hostname} with code {request.code}{request.address ? ` from ${request.address}` : ''}?
+            Check the code on the machine itself first.
+          </p>
+          <div class="actions">
+            <button class="btn" onclick={() => (confirming = null)}>Cancel</button>
+            <button class="btn primary" disabled={!live || busy !== null} onclick={() => act(request, 'approve')}>
+              Approve anyway
+            </button>
+          </div>
+        {:else}
+          <div class="actions">
+            <button class="btn" disabled={!live || busy !== null} onclick={() => act(request, 'ignore')}>Ignore</button>
+            <button class="btn primary" disabled={!live || busy !== null} onclick={() => act(request, 'approve')}>
+              {busy === request.public_key ? 'Working…' : 'Approve'}
+            </button>
+          </div>
+        {/if}
       </article>
     {/each}
   </div>

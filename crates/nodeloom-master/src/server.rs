@@ -31,7 +31,6 @@ use axum::{
     routing::{delete, get, post},
 };
 use nodeloom_core::{
-    auth::tokens_match,
     identity::{PublicKey, random_hex},
     validate::validate_node_info,
 };
@@ -96,7 +95,7 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
 }
 
 fn authorized(cluster: &Cluster, provided: Option<&str>) -> bool {
-    provided.is_some_and(|p| tokens_match(cluster.admin_token(), p))
+    provided.is_some_and(|p| cluster.admin_token_matches(p))
 }
 
 type ApiError = (StatusCode, String);
@@ -166,7 +165,8 @@ async fn ignore_pending(
     if !authorized(&cluster, bearer(&headers)) {
         return unauthorized().into_response();
     }
-    pair_result(Ok(cluster.ignore(&public_key)))
+    // Waits for an approval that may be writing to disk.
+    pair_result(tokio::task::spawn_blocking(move || cluster.ignore(&public_key)).await)
 }
 
 async fn remove_device(

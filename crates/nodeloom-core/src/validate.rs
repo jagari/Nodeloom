@@ -90,19 +90,57 @@ pub fn validate_node_info(info: &NodeInfo) -> Result<(), String> {
     Ok(())
 }
 
-/// Control characters plus the invisible formatting ones (Unicode category
-/// Cf) that matter for spoofing: bidi overrides and isolates, zero-width
-/// characters, the BOM and soft hyphen.
-fn is_hidden_char(c: char) -> bool {
+/// Control characters plus every Unicode default-ignorable code point
+/// (renders as nothing: bidi controls, zero-width characters, variation
+/// selectors, Hangul fillers, tag characters, the BOM, soft hyphen) and the
+/// interlinear annotation marks. Any of these lets two names that look the
+/// same compare different.
+pub fn is_hidden_char(c: char) -> bool {
     c.is_control()
         || matches!(c,
-            '\u{00AD}' | '\u{061C}' | '\u{180E}'
+            '\u{00AD}' | '\u{034F}' | '\u{061C}'
+            | '\u{115F}'..='\u{1160}'
+            | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
             | '\u{200B}'..='\u{200F}'
             | '\u{202A}'..='\u{202E}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{2066}'..='\u{206F}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
             | '\u{FEFF}'
-            | '\u{FFF9}'..='\u{FFFB}')
+            | '\u{FFA0}'
+            | '\u{FFF0}'..='\u{FFFB}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E0FFF}')
+}
+
+/// Makes this machine's own description pass [`validate_node_info`]: drops
+/// hidden characters and shortens long values. A long hostname is usually a
+/// fully qualified name (`laptop.dept.example.edu`), so its first label is
+/// kept before anything is cut.
+pub fn fit_node_info(mut info: NodeInfo) -> NodeInfo {
+    fn clean(text: &str) -> String {
+        text.chars()
+            .filter(|c| !is_hidden_char(*c))
+            .collect::<String>()
+            .trim()
+            .to_owned()
+    }
+    fn cut(text: String) -> String {
+        text.chars().take(MAX_NODE_TEXT).collect()
+    }
+    let mut hostname = clean(&info.hostname);
+    if hostname.chars().count() > MAX_NODE_TEXT
+        && let Some((label, _)) = hostname.split_once('.')
+        && !label.is_empty()
+    {
+        hostname = label.to_owned();
+    }
+    info.hostname = cut(hostname);
+    info.os = cut(clean(&info.os));
+    info.arch = cut(clean(&info.arch));
+    info
 }
 
 #[cfg(test)]
@@ -142,6 +180,17 @@ mod tests {
             &"h".repeat(65),
         ] {
             assert!(validate_node_info(&info("a", host)).is_err(), "{host:?}");
+        }
+        for invisible in [
+            '\u{E0020}',
+            '\u{FE0F}',
+            '\u{3164}',
+            '\u{115F}',
+            '\u{180B}',
+            '\u{034F}',
+        ] {
+            let host = format!("Jun-MacBook{invisible}");
+            assert!(validate_node_info(&info("a", &host)).is_err(), "{host:?}");
         }
         let mut twice = info("a", "host");
         twice.runners = vec![RunnerKind::Fake, RunnerKind::Fake];
@@ -193,5 +242,24 @@ mod tests {
             millis_per_frame: 0,
         };
         assert!(validate_payload(&huge).is_err());
+    }
+
+    #[test]
+    fn own_description_is_fitted_to_pass_validation() {
+        let fqdn = format!("{}.dept.example.edu", "a".repeat(50));
+        assert!(fqdn.chars().count() > MAX_NODE_TEXT);
+        let fitted = fit_node_info(info("a", &fqdn));
+        assert_eq!(fitted.hostname, "a".repeat(50));
+        assert!(validate_node_info(&fitted).is_ok());
+
+        let mut odd = info("a", " lab\u{200B}-pc\n");
+        odd.os = "x".repeat(100);
+        let fitted = fit_node_info(odd);
+        assert_eq!(fitted.hostname, "lab-pc");
+        assert_eq!(fitted.os.chars().count(), MAX_NODE_TEXT);
+        assert!(validate_node_info(&fitted).is_ok());
+
+        let label_too_long = fit_node_info(info("a", &"b".repeat(80)));
+        assert_eq!(label_too_long.hostname.chars().count(), MAX_NODE_TEXT);
     }
 }

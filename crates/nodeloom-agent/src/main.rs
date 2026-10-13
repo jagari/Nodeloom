@@ -100,10 +100,27 @@ async fn main() -> Result<()> {
 async fn run(args: RunArgs, state_dir: PathBuf) -> Result<()> {
     // Checked here rather than with clap's `requires`, so an exported
     // NODELOOM_TOKEN does not break the subcommands.
+    if args.token.as_deref().is_some_and(|t| t.trim().is_empty()) {
+        bail!("--token / NODELOOM_TOKEN is empty; unset it to pair by approval in the dashboard");
+    }
     if args.token.is_some() && args.master.is_none() {
         bail!(
             "--token (or NODELOOM_TOKEN) needs --master: the token is never sent to a master \
              found by discovery. Leave it out to pair by approval in the dashboard."
+        );
+    }
+    if args.token.is_some()
+        && let Some(host) = args.master.as_deref().map(host_of)
+        && (host.ends_with(".local")
+            || (!host.contains('.')
+                && host != "localhost"
+                && host.parse::<std::net::IpAddr>().is_err()))
+    {
+        // Such names may be resolved by multicast DNS or LLMNR, which anyone
+        // on the network can answer, so the token could reach an impostor.
+        warn!(
+            "--master {host} may be resolved by multicast DNS; prefer an IP address when using \
+             --token, or pair by approval instead"
         );
     }
     let me = identity::load_or_create(&state_dir)?;
@@ -148,4 +165,28 @@ async fn run(args: RunArgs, state_dir: PathBuf) -> Result<()> {
         metrics_interval: Duration::from_secs(args.metrics_interval.max(1)),
     })
     .await
+}
+
+/// The host part of `host:port`, `[v6]:port` or a bare host.
+fn host_of(master: &str) -> &str {
+    if let Some(rest) = master.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or(rest);
+    }
+    match master.rsplit_once(':') {
+        Some((host, port)) if !host.contains(':') && port.parse::<u16>().is_ok() => host,
+        _ => master,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::host_of;
+
+    #[test]
+    fn host_of_strips_the_port() {
+        assert_eq!(host_of("mac.local:7878"), "mac.local");
+        assert_eq!(host_of("192.168.1.5"), "192.168.1.5");
+        assert_eq!(host_of("[fe80::1]:7878"), "fe80::1");
+        assert_eq!(host_of("fe80::1"), "fe80::1");
+    }
 }

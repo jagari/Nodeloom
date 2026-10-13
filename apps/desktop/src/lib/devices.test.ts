@@ -72,6 +72,16 @@ describe('lookalikes', () => {
     expect(flags.get('k6')).toMatch(/same name/);
   });
 
+  it('compares names the way they look, not byte by byte', () => {
+    const pending = [request('k1', 'a', 'Jun-MacBook ', '111 111'), request('k2', 'b', 'jun-macbook', '222 222')];
+    const flags = lookalikes(pending, [{ id: 'c', name: 'ＳＴＵＤＩＯ' }]);
+    expect(flags.get('k1')).toMatch(/same name/);
+    expect(flags.get('k2')).toMatch(/same name/);
+    expect(lookalikes([request('k3', 'd', 'studio', '333 333')], [{ id: 'c', name: 'ＳＴＵＤＩＯ' }]).get('k3')).toMatch(
+      /paired machine/,
+    );
+  });
+
   it('flags a request named like a paired machine', () => {
     const flags = lookalikes([request('k1', 'new', 'studio', '111 111')], [{ id: 'old', name: 'studio' }]);
     expect(flags.get('k1')).toMatch(/paired machine/);
