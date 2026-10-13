@@ -91,7 +91,10 @@ impl From<StoreError> for PairError {
 }
 
 struct PendingEntry {
+    /// Unique per connection; a ticket only removes its own entry.
     seq: u64,
+    /// Place in the list. A reconnecting machine keeps it (see `classify`).
+    order: u64,
     info: NodeInfo,
     code: String,
     address: Option<IpAddr>,
@@ -402,9 +405,9 @@ impl Cluster {
         // The same machine reconnecting replaces its own older request but
         // keeps its place in the list, so reconnecting cannot shuffle the
         // cards under the cursor of someone about to click Approve.
-        let mut seq = None;
+        let mut order = None;
         if let Some(old) = inner.pending.remove(key) {
-            seq = Some(old.seq);
+            order = Some(old.order);
             old.decide(Decision::Rejected(
                 "replaced by a newer connection from this machine".into(),
             ));
@@ -414,7 +417,7 @@ impl Cluster {
                 .pending
                 .iter()
                 .filter(|(_, p)| p.address == Some(address))
-                .map(|(k, p)| (p.seq, k.clone()))
+                .map(|(k, p)| (p.order, k.clone()))
                 .collect();
             same.sort();
             let excess =
@@ -431,15 +434,15 @@ impl Cluster {
             return Admission::Rejected("too many machines are waiting for approval".into());
         }
 
-        let seq = seq.unwrap_or_else(|| {
-            inner.next_pending += 1;
-            inner.next_pending
-        });
+        inner.next_pending += 1;
+        let seq = inner.next_pending;
+        let order = order.unwrap_or(seq);
         let (decision, receiver) = oneshot::channel();
         inner.pending.insert(
             key.to_owned(),
             PendingEntry {
                 seq,
+                order,
                 info: info.clone(),
                 code: public_key.confirmation_code(),
                 address,
@@ -696,7 +699,7 @@ impl Cluster {
             .iter()
             .map(|(key, p)| {
                 (
-                    p.seq,
+                    p.order,
                     PendingDevice {
                         public_key: key.clone(),
                         code: p.code.clone(),
@@ -706,7 +709,7 @@ impl Cluster {
                 )
             })
             .collect();
-        pending.sort_by_key(|(seq, _)| *seq);
+        pending.sort_by_key(|(order, _)| *order);
         let devices = inner
             .devices
             .approved
@@ -1135,6 +1138,9 @@ mod tests {
             [key.as_hex(), k0.as_hex()],
             "a reconnect keeps its place"
         );
+        // The replaced connection ending must not take the new request along.
+        drop(_old);
+        assert_eq!(pending_keys(&cluster), [key.as_hex(), k0.as_hex()]);
         drop(_other);
 
         // Two more from the same address push the oldest out.

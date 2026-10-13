@@ -9,6 +9,9 @@
   }
   let { rows, live, remove }: Props = $props();
 
+  // Moves focus to Cancel when the confirmation appears (see PendingDevices).
+  const focus = (node: HTMLElement) => node.focus();
+
   let busy = $state<NodeId | null>(null);
   /** Machine whose removal waits for a second click (not window.confirm(),
    * which the macOS webview always answers with false). */
@@ -48,10 +51,11 @@
         </span>
         <span class="name">{row.name}</span>
         {#if confirming === row.id}
-          <button class="btn" onclick={() => (confirming = null)}>Cancel</button>
+          <!-- Cancel takes the spot Remove had, so a double click cannot remove. -->
           <button class="btn danger" disabled={!live || busy !== null} onclick={() => onremove(row)}>
             Remove for good
           </button>
+          <button class="btn" {@attach focus} onclick={() => (confirming = null)}>Cancel</button>
         {:else}
           <button class="btn" disabled={!live || busy !== null} onclick={() => (confirming = row.id)}>
             {busy === row.id ? 'Removing…' : 'Remove'}
@@ -59,8 +63,8 @@
         {/if}
       </li>
       {#if confirming === row.id}
-        <li class="explain muted">
-          {row.name} is disconnected now and its key is refused from then on. To add it again, run
+        <li class="explain muted" role="status">
+          Removing {row.name} disconnects it at once and refuses its key from then on. To add it again, run
           <code>nodeloom-agent reset-identity</code> on it and approve it here. If it was started with
           <code>--token</code>, that machine also holds the admin token: rotate it with
           <code>nodeloom-master --rotate-admin-token</code>.
@@ -121,6 +125,7 @@
     font-weight: 600;
   }
   code {
+    white-space: nowrap;
     background: var(--page);
     padding: 1px 5px;
     border-radius: 4px;

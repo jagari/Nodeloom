@@ -22,7 +22,17 @@ export function pairedRows(devices: PairedDevice[], nodes: NodeView[]): PairedRo
  * scripts are not caught.
  */
 export function sameName(name: string): string {
-  return name.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+  return name
+    .normalize('NFKC')
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/** What a request's card shows as its name. */
+export function shownName(request: PendingDevice): string {
+  return request.info.hostname || request.info.id;
 }
 
 /**
@@ -37,7 +47,7 @@ export function lookalikes(pending: PendingDevice[], devices: PairedDevice[]): M
     return counts;
   };
   const codes = count(pending.map((p) => p.code));
-  const hosts = count(pending.map((p) => sameName(p.info.hostname)));
+  const hosts = count(pending.map((p) => sameName(shownName(p))));
   const ids = count(pending.map((p) => p.info.id));
   const pairedNames = new Set(devices.map((d) => sameName(d.name)));
 
@@ -48,9 +58,9 @@ export function lookalikes(pending: PendingDevice[], devices: PairedDevice[]): M
         ? 'Another waiting machine shows the same code.'
         : (ids.get(p.info.id) ?? 0) > 1
           ? 'Another waiting machine uses the same id.'
-          : (hosts.get(sameName(p.info.hostname)) ?? 0) > 1
+          : (hosts.get(sameName(shownName(p))) ?? 0) > 1
             ? 'Another waiting machine has the same name.'
-            : pairedNames.has(sameName(p.info.hostname))
+            : pairedNames.has(sameName(shownName(p)))
               ? 'A paired machine already has this name.'
               : null;
     if (reason) reasons.set(p.public_key, reason);

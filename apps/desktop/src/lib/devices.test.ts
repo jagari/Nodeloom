@@ -82,6 +82,13 @@ describe('lookalikes', () => {
     );
   });
 
+  it('folds dash lookalikes and compares the name the card shows', () => {
+    const paired = [{ id: 'old', name: 'Jun-MacBook' }];
+    expect(lookalikes([request('k1', 'x', 'Jun\u2010MacBook', '111 111')], paired).get('k1')).toMatch(/paired/);
+    // No hostname: the card shows the id, so compare that.
+    expect(lookalikes([request('k2', 'Jun-MacBook', '', '222 222')], paired).get('k2')).toMatch(/paired/);
+  });
+
   it('flags a request named like a paired machine', () => {
     const flags = lookalikes([request('k1', 'new', 'studio', '111 111')], [{ id: 'old', name: 'studio' }]);
     expect(flags.get('k1')).toMatch(/paired machine/);

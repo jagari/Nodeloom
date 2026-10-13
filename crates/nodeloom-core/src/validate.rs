@@ -83,6 +83,11 @@ pub fn validate_node_info(info: &NodeInfo) -> Result<(), String> {
             return Err(format!("{field} contains control or formatting characters"));
         }
     }
+    // The dashboard shows the hostname; an empty one would show the id
+    // instead and slip past the lookalike checks there.
+    if info.hostname.trim().is_empty() {
+        return Err("hostname is empty".into());
+    }
     let unique: HashSet<_> = info.runners.iter().collect();
     if unique.len() != info.runners.len() {
         return Err("runners are listed more than once".into());
@@ -136,6 +141,9 @@ pub fn fit_node_info(mut info: NodeInfo) -> NodeInfo {
         && !label.is_empty()
     {
         hostname = label.to_owned();
+    }
+    if hostname.is_empty() {
+        hostname = "unknown".into();
     }
     info.hostname = cut(hostname);
     info.os = cut(clean(&info.os));
@@ -258,6 +266,10 @@ mod tests {
         assert_eq!(fitted.hostname, "lab-pc");
         assert_eq!(fitted.os.chars().count(), MAX_NODE_TEXT);
         assert!(validate_node_info(&fitted).is_ok());
+
+        assert!(validate_node_info(&info("a", " ")).is_err());
+        let blank = fit_node_info(info("a", "\u{200B}"));
+        assert_eq!(blank.hostname, "unknown");
 
         let label_too_long = fit_node_info(info("a", &"b".repeat(80)));
         assert_eq!(label_too_long.hostname.chars().count(), MAX_NODE_TEXT);

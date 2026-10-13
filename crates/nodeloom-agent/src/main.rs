@@ -111,10 +111,7 @@ async fn run(args: RunArgs, state_dir: PathBuf) -> Result<()> {
     }
     if args.token.is_some()
         && let Some(host) = args.master.as_deref().map(host_of)
-        && (host.ends_with(".local")
-            || (!host.contains('.')
-                && host != "localhost"
-                && host.parse::<std::net::IpAddr>().is_err()))
+        && may_resolve_by_multicast(host)
     {
         // Such names may be resolved by multicast DNS or LLMNR, which anyone
         // on the network can answer, so the token could reach an impostor.
@@ -178,9 +175,42 @@ fn host_of(master: &str) -> &str {
     }
 }
 
+/// Names the OS may look up with multicast DNS (`.local`) or LLMNR (single
+/// labels), which anyone on the network can answer.
+fn may_resolve_by_multicast(host: &str) -> bool {
+    let name = host.trim_end_matches('.').to_ascii_lowercase();
+    // A link-local IPv6 address may carry a zone: fe80::1%en0.
+    let address = name.split('%').next().unwrap_or(&name);
+    if address.parse::<std::net::IpAddr>().is_ok() {
+        return false;
+    }
+    name.ends_with(".local") || (!name.contains('.') && name != "localhost")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::host_of;
+    use super::{host_of, may_resolve_by_multicast};
+
+    #[test]
+    fn multicast_names_are_spotted_in_any_spelling() {
+        for name in [
+            "mac.local",
+            "MAC.LOCAL",
+            "Juns-MacBook.Local",
+            "mac.local.",
+            "studio",
+        ] {
+            assert!(may_resolve_by_multicast(name), "{name}");
+        }
+        for name in [
+            "192.168.1.5",
+            "fe80::1%en0",
+            "localhost",
+            "master.example.edu",
+        ] {
+            assert!(!may_resolve_by_multicast(name), "{name}");
+        }
+    }
 
     #[test]
     fn host_of_strips_the_port() {

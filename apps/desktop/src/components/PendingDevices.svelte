@@ -1,5 +1,10 @@
 <script lang="ts">
+  import { shownName } from '../lib/devices';
   import type { PendingDevice } from '../lib/types';
+
+  // Moves focus to the safe choice when a confirmation appears, so keyboard
+  // and screen-reader users are not left on a button that just vanished.
+  const focus = (node: HTMLElement) => node.focus();
 
   interface Props {
     pending: PendingDevice[];
@@ -50,7 +55,7 @@
       {@const error = errors[request.public_key]}
       <article class="card request">
         <div class="who">
-          <h3>{request.info.hostname || request.info.id}</h3>
+          <h3>{shownName(request)}</h3>
           <div class="muted sub">
             {request.info.os} · {request.info.arch}{request.address ? ` · ${request.address}` : ''}
           </div>
@@ -64,14 +69,15 @@
         {/if}
         {#if confirming === request.public_key}
           <p class="note warn" role="status">
-            Approve {request.info.hostname} with code {request.code}{request.address ? ` from ${request.address}` : ''}?
+            Approve {shownName(request)} with code {request.code}{request.address ? ` from ${request.address}` : ''}?
             Check the code on the machine itself first.
           </p>
+          <!-- Cancel takes the spot Approve had, so a double click cannot approve. -->
           <div class="actions">
-            <button class="btn" onclick={() => (confirming = null)}>Cancel</button>
             <button class="btn primary" disabled={!live || busy !== null} onclick={() => act(request, 'approve')}>
               Approve anyway
             </button>
+            <button class="btn" {@attach focus} onclick={() => (confirming = null)}>Cancel</button>
           </div>
         {:else}
           <div class="actions">

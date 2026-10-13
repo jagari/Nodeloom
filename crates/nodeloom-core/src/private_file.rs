@@ -8,10 +8,9 @@
 
 use std::{
     ffi::OsString,
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 fn options() -> OpenOptions {
@@ -38,34 +37,31 @@ pub fn create_private_dir(dir: &Path) -> io::Result<()> {
 }
 
 /// A complete, synced, owner-only copy of `contents` next to `path`, under a
-/// name no other writer uses. Readers never see it half-written because it
-/// only appears under `path` through a link or rename.
+/// random name no other writer uses. Readers never see it half-written
+/// because it only appears under `path` through a link or rename.
 fn write_temp(path: &Path, contents: &[u8]) -> io::Result<PathBuf> {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    // Random rather than pid-based: in containers every process can be
+    // pid 1, and a leftover from a crash must not collide with a new name.
+    let suffix = crate::identity::random_hex(8).map_err(io::Error::other)?;
     let mut name = OsString::from(path.as_os_str());
-    name.push(format!(
-        ".tmp-{}-{}",
-        std::process::id(),
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
+    name.push(format!(".tmp-{suffix}"));
     let tmp = PathBuf::from(name);
-    let result = options().open(&tmp).and_then(|mut file: File| {
-        file.write_all(contents)?;
-        file.sync_all()
-    });
-    match result {
-        Ok(()) => Ok(tmp),
-        Err(e) => {
-            let _ = fs::remove_file(&tmp);
-            Err(e)
-        }
+    let mut file = options().open(&tmp)?;
+    let written = file.write_all(contents).and_then(|()| file.sync_all());
+    if let Err(e) = written {
+        // Only now is the file ours to delete.
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
     }
+    Ok(tmp)
 }
 
 /// Makes a rename or link durable: on Unix the directory entry is only on
-/// disk once the directory itself is synced. Windows cannot open
-/// directories as files, and NTFS journals the rename.
-fn sync_parent(path: &Path) -> io::Result<()> {
+/// disk once the directory itself is synced. Best effort, because the change
+/// is already visible: some filesystems refuse to sync directories, and
+/// reporting failure then would make callers undo something that happened.
+/// Windows cannot open directories as files, and NTFS journals the rename.
+fn sync_parent(path: &Path) {
     #[cfg(unix)]
     if let Some(parent) = path.parent() {
         let dir = if parent.as_os_str().is_empty() {
@@ -73,11 +69,12 @@ fn sync_parent(path: &Path) -> io::Result<()> {
         } else {
             parent
         };
-        File::open(dir)?.sync_all()?;
+        if let Ok(dir) = fs::File::open(dir) {
+            let _ = dir.sync_all();
+        }
     }
     #[cfg(not(unix))]
     let _ = path;
-    Ok(())
 }
 
 /// Writes a new owner-only file. Fails with `AlreadyExists` instead of
@@ -88,8 +85,22 @@ pub fn write_new(path: &Path, contents: &[u8]) -> io::Result<()> {
     let tmp = write_temp(path, contents)?;
     let linked = fs::hard_link(&tmp, path);
     let _ = fs::remove_file(&tmp);
-    linked?;
-    sync_parent(path)
+    match linked {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Err(e),
+        // FAT, exFAT and some network shares have no hard links. Fall back
+        // to creating the file in place: still exclusive, though a racing
+        // reader may briefly see it empty.
+        Err(_) => {
+            let mut file = options().open(path)?;
+            if let Err(e) = file.write_all(contents).and_then(|()| file.sync_all()) {
+                let _ = fs::remove_file(path);
+                return Err(e);
+            }
+        }
+    }
+    sync_parent(path);
+    Ok(())
 }
 
 /// Replaces `path` atomically: readers see either the old or the new file,
@@ -101,7 +112,8 @@ pub fn replace(path: &Path, contents: &[u8]) -> io::Result<()> {
         let _ = fs::remove_file(&tmp);
         return Err(e);
     }
-    sync_parent(path)
+    sync_parent(path);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -145,6 +157,19 @@ mod tests {
             }
             assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1, "temp left");
         }
+    }
+
+    #[test]
+    fn leftover_temp_files_do_not_get_in_the_way() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identity");
+        for i in 0..20 {
+            fs::write(dir.path().join(format!("identity.tmp-{i}")), b"stale").unwrap();
+        }
+        write_new(&path, b"fresh").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"fresh");
+        // Nothing that was there before is touched.
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 21);
     }
 
     #[test]
