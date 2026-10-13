@@ -18,7 +18,7 @@
 | 경로 | 역할 | 담당 역할 |
 |---|---|---|
 | `crates/nodeloom-proto` | 모든 구성 요소가 쓰는 메시지 타입(팀 공통 계약) | A |
-| `crates/nodeloom-core` | 작업 분할, `Runner` 트레이트(플러그인의 바탕), 자원 수집, 토큰 비교, 작업 검증, mDNS | A |
+| `crates/nodeloom-core` | 작업 분할, `Runner` 트레이트(플러그인의 바탕), 자원 수집, 기기 키·토큰 비교, 작업·기기 정보 검증, mDNS | A |
 | `crates/nodeloom-master` | 클러스터 상태, 스케줄링·재배정, HTTP/WebSocket API | A |
 | `crates/nodeloom-agent` | 각 기기에서 도는 데몬: 접속, 자원 보고, 작업 실행 | B |
 | `crates/nodeloom-runner-blender` | `blender -b`로 프레임 범위 렌더하는 내장 플러그인. **보류**(신규 기능 없음). 새 플러그인을 만들 때 구조 예시로 본다 | B |
@@ -38,7 +38,10 @@
    템플릿은 네트워크로 추가·변경할 수 없다. ②는 설계·보안 검토 후 팀이 결정하기 전까지 구현하지 않는다(`docs/STRATEGY.md` P2, D12). "명령 문자열을 받아 실행"하는 기능은 어떤 형태로도 추가하지 않는다.
 2. **작업 검증은 양쪽에서 한다.** 마스터(제출 시)와 에이전트(실행 직전) 모두 `nodeloom_core::validate::validate_payload`를 호출한다. 경로는 작업 폴더 안의 상대 경로만 허용한다.
 3. **외부 프로그램은 셸을 거치지 않고 인자 목록으로 실행한다.** Blender는 `--disable-autoexec`를 유지한다.
-4. **인증을 약화하지 않는다.** 모든 에이전트 연결과 UI API는 인증이 필요하다. 지금은 공유 페어링 토큰이고 비교는 `nodeloom_core::auth::tokens_match`를 쓴다. 플러그 앤 플레이를 위해 "처음 한 번 화면에서 승인 → 기기별 자격 증명"으로 바꿀 예정이다(P0). 승인 전 기기에게는 작업이나 클러스터 정보를 주지 않는다. "자동으로 아무 기기나 붙는다"는 구현하지 않는다.
+4. **인증을 약화하지 않는다.** 모든 에이전트 연결과 UI API는 인증이 필요하다.
+   - 기기는 처음 한 번 화면 승인(또는 `--master`를 직접 준 에이전트의 관리 토큰)으로 들어오고, 이후에는 기기별 Ed25519 키로 매번 서명해 증명한다(`nodeloom_core::identity`, D13).
+   - UI API는 관리 토큰이 필요하고, 비교는 `nodeloom_core::auth::tokens_match`(상수 시간)를 쓴다. 루프백 예외는 두지 않는다.
+   - 승인 전 기기에게는 작업이나 클러스터 정보를 주지 않는다. 제거한 기기의 키는 다시 받지 않는다. "자동으로 아무 기기나 붙는다"는 구현하지 않는다.
 5. **비밀값과 개인정보를 커밋하지 않는다.** 토큰, API 키, 팀원 개인정보, D-Lab 신청서 같은 문서가 해당한다.
 6. **테스트를 끄거나 건너뛰지 않는다.** 실패하면 원인을 고친다. 새 기능에는 테스트를 같이 쓴다.
 7. **프로토콜을 바꾸면 양쪽을 같이 고친다.** `nodeloom-proto`를 바꿨다면 `apps/desktop/src/lib/types.ts`(손으로 맞추는 사본)도 고치고, Rust와 UI 테스트를 모두 돌린다. 프로토콜 변경은 이슈에서 먼저 합의하고 A가 승인한다.
@@ -66,10 +69,10 @@ CI는 **항상 최신 stable Rust**를 쓴다. 로컬 Rust가 오래되면 로�
 
 ```sh
 cargo build
-export NODELOOM_TOKEN=dev-token
-./target/debug/nodeloom-master --bind 127.0.0.1:7878 --no-mdns &
+NODELOOM_TOKEN=dev-token ./target/debug/nodeloom-master --bind 127.0.0.1:7878 --no-mdns &
 ./target/debug/nodeloom-agent --master 127.0.0.1:7878 --enable-fake-runner &
-# UI에서 127.0.0.1:7878 / dev-token 으로 접속
+# UI에서 127.0.0.1:7878 / dev-token 으로 접속 → "Waiting for approval"에서 에이전트 로그의 코드와 같은지 보고 승인
+# 승인 없이 붙이려면 에이전트에 --token dev-token (--master가 있을 때만)
 ```
 
 ## 작업 흐름
