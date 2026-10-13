@@ -1,4 +1,6 @@
-import type { ClusterSnapshot, JobView, TaskPayload } from './types';
+import type { ClusterSnapshot, JobView, NodeId, TaskPayload } from './types';
+
+const GONE = 'That machine is no longer waiting; it may have disconnected.';
 
 export type ConnectionStatus = 'connecting' | 'live' | 'offline' | 'unauthorized';
 
@@ -61,16 +63,41 @@ export class ClusterClient {
   }
 
   async submit(payload: TaskPayload): Promise<JobView> {
-    const response = await fetch(`${this.endpoint.http}/api/jobs`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ payload }),
+    const response = await this.request('POST', '/api/jobs', { payload });
+    return (await response.json()) as JobView;
+  }
+
+  /** Lets a waiting machine in. */
+  async approve(publicKey: string): Promise<void> {
+    await this.request('POST', `/api/pending/${encodeURIComponent(publicKey)}/approve`, undefined, GONE);
+  }
+
+  /** Refuses a waiting machine until the master restarts. */
+  async ignore(publicKey: string): Promise<void> {
+    await this.request('POST', `/api/pending/${encodeURIComponent(publicKey)}/ignore`, undefined, GONE);
+  }
+
+  /** Removes a paired machine for good. */
+  async removeDevice(id: NodeId): Promise<void> {
+    await this.request('DELETE', `/api/devices/${encodeURIComponent(id)}`, undefined, 'That machine is not paired.');
+  }
+
+  /** Sends an authorized request; throws with the master's explanation. */
+  private async request(method: string, path: string, body?: unknown, notFound?: string): Promise<Response> {
+    const headers: Record<string, string> = { Authorization: `Bearer ${this.token}` };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const response = await fetch(`${this.endpoint.http}${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (!response.ok) {
+      if (response.status === 404 && notFound) throw new Error(notFound);
+      if (response.status === 401) throw new Error('The admin token was not accepted.');
       const detail = (await response.text()).trim();
       throw new Error(detail || `master answered ${response.status}`);
     }
-    return (await response.json()) as JobView;
+    return response;
   }
 
   private async connect(): Promise<void> {

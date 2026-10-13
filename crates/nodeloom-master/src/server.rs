@@ -257,6 +257,7 @@ async fn agent_session(
     };
     let node_id: NodeId = hello.info.id.clone();
     let key = hello.public_key.as_hex().to_owned();
+    let from = address.map_or_else(|| "an unknown address".to_owned(), |a| a.to_string());
 
     match cluster.classify(
         &hello.info,
@@ -277,12 +278,12 @@ async fn agent_session(
             }
         }
         Admission::Rejected(reason) => {
-            warn!("refused {node_id} from {address:?}: {reason}");
+            warn!("refused {node_id} from {from}: {reason}");
             return reject(&mut socket, reason).await;
         }
         Admission::Pending(ticket, decision) => {
             info!(
-                "{node_id} ({}) from {address:?} is waiting for approval",
+                "{node_id} ({}) from {from} is waiting for approval",
                 hello.info.hostname
             );
             let approved = wait_for_decision(&mut socket, &cluster, decision).await;

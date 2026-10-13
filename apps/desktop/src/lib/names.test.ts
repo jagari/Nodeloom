@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { displayNames } from './names';
-import type { NodeView } from './types';
 
-const node = (id: string, hostname: string): NodeView => ({
-  info: { id, hostname, os: '', arch: '', cpu_cores: 1, total_memory_bytes: 1, runners: [] },
-  metrics: null,
-  busy_tasks: 0,
-});
+const node = (id: string, hostname: string) => ({ id, hostname });
 
 describe('displayNames', () => {
   it('keeps unique hostnames untouched', () => {

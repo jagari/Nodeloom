@@ -1,13 +1,18 @@
 <script lang="ts">
   import { ClusterClient, parseEndpoint, type ConnectionStatus } from './lib/client';
+  import { lookalikes, pairedRows } from './lib/devices';
   import { updateHistory, type History } from './lib/history';
   import { displayNames } from './lib/names';
-  import type { ClusterSnapshot, TaskPayload } from './lib/types';
+  import type { ClusterSnapshot, NodeId, TaskPayload } from './lib/types';
   import ConnectForm from './components/ConnectForm.svelte';
   import JobList from './components/JobList.svelte';
   import Kpis from './components/Kpis.svelte';
   import NodeCard from './components/NodeCard.svelte';
+  import PairedDevices from './components/PairedDevices.svelte';
+  import PendingDevices from './components/PendingDevices.svelte';
   import SubmitForm from './components/SubmitForm.svelte';
+
+  const EMPTY: ClusterSnapshot = { nodes: [], jobs: [], pending: [], devices: [] };
 
   const HOST_KEY = 'nodeloom.host';
   const TOKEN_KEY = 'nodeloom.token';
@@ -31,7 +36,7 @@
   let host = $state(load(HOST_KEY));
   let token = $state(load(TOKEN_KEY));
   let status = $state<ConnectionStatus>('connecting');
-  let snapshot = $state<ClusterSnapshot>({ nodes: [], jobs: [] });
+  let snapshot = $state<ClusterSnapshot>(EMPTY);
   let history = $state<History>({});
   let client = $state<ClusterClient | null>(null);
 
@@ -44,7 +49,7 @@
     save(HOST_KEY, nextHost);
     save(TOKEN_KEY, nextToken);
     history = {};
-    snapshot = { nodes: [], jobs: [] };
+    snapshot = EMPTY;
     client = new ClusterClient(endpoint, nextToken, {
       onSnapshot(s) {
         snapshot = s;
@@ -69,18 +74,24 @@
     return () => client?.stop();
   });
 
-  const names = $derived(displayNames(snapshot.nodes));
+  const names = $derived(displayNames(snapshot.nodes.map((n) => n.info)));
+  const paired = $derived(pairedRows(snapshot.devices, snapshot.nodes));
+  const flags = $derived(lookalikes(snapshot.pending, snapshot.devices));
 
-  const submit = (payload: TaskPayload) => {
+  function connected(): ClusterClient {
     if (!client) throw new Error('Not connected');
-    return client.submit(payload);
-  };
+    return client;
+  }
+  const submit = (payload: TaskPayload) => connected().submit(payload);
+  const approve = (key: string) => connected().approve(key);
+  const ignore = (key: string) => connected().ignore(key);
+  const remove = (id: NodeId) => connected().removeDevice(id);
 
   const statusText: Record<ConnectionStatus, string> = {
     connecting: 'Connecting…',
     live: 'Live',
     offline: 'Master unreachable, retrying…',
-    unauthorized: 'Wrong pairing token',
+    unauthorized: 'Wrong admin token',
   };
 </script>
 
@@ -106,13 +117,18 @@
     </header>
 
     <div class="stack" class:stale={status !== 'live'}>
+      {#if snapshot.pending.length > 0}
+        <PendingDevices pending={snapshot.pending} {flags} live={status === 'live'} {approve} {ignore} />
+      {/if}
+
       <Kpis {snapshot} />
 
       <section>
         <h2>Machines</h2>
         {#if snapshot.nodes.length === 0}
           <p class="muted">
-            No machine has joined yet. Run <code>nodeloom-agent --token …</code> on each machine.
+            No machine is online. Start <code>nodeloom-agent</code> on a machine on this network; it will appear
+            here for approval.
           </p>
         {:else}
           <div class="nodes">
@@ -125,6 +141,10 @@
 
       <SubmitForm nodes={snapshot.nodes} {submit} />
       <JobList {snapshot} />
+
+      {#if paired.length > 0}
+        <PairedDevices rows={paired} live={status === 'live'} {remove} />
+      {/if}
     </div>
   </main>
 {/if}
