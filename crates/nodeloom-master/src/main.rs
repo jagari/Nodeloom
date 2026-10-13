@@ -1,9 +1,9 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use nodeloom_core::{discovery, metrics::hostname};
-use nodeloom_master::{Cluster, generate_token, serve};
+use nodeloom_master::{Cluster, DeviceStore, load_admin_token, serve};
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 
@@ -14,9 +14,19 @@ struct Args {
     #[arg(long, env = "NODELOOM_BIND", default_value = "0.0.0.0:7878")]
     bind: SocketAddr,
 
-    /// Pairing token. A random one is generated and printed when omitted.
+    /// Admin token for the dashboard. When omitted, one is created on first
+    /// start and kept in the data directory.
     #[arg(long, env = "NODELOOM_TOKEN")]
     token: Option<String>,
+
+    /// Replace the saved admin token with a new one.
+    #[arg(long, conflicts_with = "token")]
+    rotate_admin_token: bool,
+
+    /// Where paired machines and the admin token are kept.
+    /// Default: the user's local data directory, under nodeloom/master.
+    #[arg(long, env = "NODELOOM_DATA_DIR")]
+    data_dir: Option<PathBuf>,
 
     /// Do not advertise this master on the local network.
     #[arg(long)]
@@ -32,18 +42,40 @@ async fn main() -> Result<()> {
         .init();
     let args = Args::parse();
 
-    let generated = args.token.is_none();
-    let token = args.token.unwrap_or_else(generate_token);
-    let cluster = Arc::new(Cluster::new(token.clone()));
+    let data_dir = match args.data_dir {
+        Some(dir) => dir,
+        None => dirs::data_local_dir()
+            .context("no local data directory on this platform; pass --data-dir")?
+            .join("nodeloom")
+            .join("master"),
+    };
+    let store = DeviceStore::open(&data_dir)?;
+    let token = match args.token {
+        Some(token) => token,
+        None => {
+            let (token, created) = load_admin_token(&data_dir, args.rotate_admin_token)
+                .with_context(|| format!("admin token in {}", data_dir.display()))?;
+            let path = data_dir.join("admin-token");
+            // Print a new token once; afterwards only say where it is, so
+            // service logs do not keep a copy of a long-lived secret.
+            if created {
+                info!("admin token: {token} (saved to {})", path.display());
+            } else {
+                info!("admin token: see {}", path.display());
+            }
+            token
+        }
+    };
+    let cluster = Arc::new(Cluster::with_store(token, store));
 
     let listener = TcpListener::bind(args.bind)
         .await
         .with_context(|| format!("binding {}", args.bind))?;
     let addr = listener.local_addr()?;
-    info!("listening on {addr}");
-    if generated {
-        info!("pairing token: {token}");
-    }
+    info!(
+        "listening on {addr}; paired machines in {}",
+        data_dir.display()
+    );
 
     let _advertisement = if args.no_mdns {
         None
