@@ -1,21 +1,23 @@
 # Nodeloom
 
-See what your home or team LLM cluster is actually doing. Nodeloom runs a small
-agent on each Mac, Windows or Linux machine and shows, in one desktop app, which
-models are loaded where, how busy each GPU is, and why a multi-machine setup is
-slow or broken, whichever engine you use (Ollama, llama.cpp, exo).
+Turn the mismatched machines a student team already has (Macs, Windows PCs,
+Linux boxes, Raspberry Pis, Jetsons) into one pool: install the agent, approve
+the device once, and it shows up on a shared dashboard. Then drop in a batch of
+files (first plugin: Whisper transcription) and the work is split across them.
 
-> **Status: early development, direction just changed.** The current code
-> pools machines and distributes Blender frame ranges; that feature is on hold.
-> Observability for local AI clusters is the next milestone. See
+> **Status: early development.** Today the code pools machines with a shared
+> token and distributes Blender frame ranges (on hold). Plug-and-play pairing,
+> arm64 builds and the first batch plugin are next. See
 > [docs/STRATEGY.md](docs/STRATEGY.md).
 
 ## What it is not
 
-- Not an inference engine, and it will not make inference faster. Links between
-  machines (a few GB/s) are far slower than GPU memory (tens to hundreds of
-  GB/s); Nodeloom saves setup time and helps find faults instead.
-- Agents never run arbitrary commands.
+- It only speeds up work that splits into independent pieces (files, frames).
+  It will not make a viewport, a game or a single model run faster: links
+  between machines (a few GB/s) are far slower than GPU memory (tens to
+  hundreds of GB/s).
+- Agents never execute command strings received over the network. Jobs are
+  built-in plugins, or (planned) templates the device owner registers locally.
 
 ## For the team
 
