@@ -7,7 +7,7 @@
 
   let { snapshot }: { snapshot: ClusterSnapshot } = $props();
 
-  const names = $derived(displayNames(snapshot.nodes));
+  const names = $derived(displayNames(snapshot.nodes.map((n) => n.info)));
   // Newest job first.
   const jobs = $derived([...snapshot.jobs].reverse());
 </script>

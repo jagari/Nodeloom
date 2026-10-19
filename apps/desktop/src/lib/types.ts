@@ -43,9 +43,29 @@ export interface NodeView {
   busy_tasks: number;
 }
 
+/** A machine waiting for approval. */
+export interface PendingDevice {
+  /** Identifies the request in the approve and ignore endpoints. */
+  public_key: string;
+  /** Six digits the machine also shows, e.g. "307 039". */
+  code: string;
+  info: NodeInfo;
+  address: string | null;
+}
+
+/** An approved machine, connected or not. */
+export interface PairedDevice {
+  id: NodeId;
+  /** Hostname at approval time. */
+  name: string;
+}
+
 export interface ClusterSnapshot {
+  /** Approved machines that are connected now. */
   nodes: NodeView[];
   jobs: JobView[];
+  pending: PendingDevice[];
+  devices: PairedDevice[];
 }
 
 export type TaskPayload =

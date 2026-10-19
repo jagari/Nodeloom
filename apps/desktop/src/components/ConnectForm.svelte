@@ -24,7 +24,8 @@
 <form class="card connect" {onsubmit}>
   <h1>Connect to a master</h1>
   <p class="muted">
-    Start <code>nodeloom-master</code> on one machine, then enter its address and the pairing token it prints.
+    Start <code>nodeloom-master</code> on one machine, then enter its address and the admin token it prints the
+    first time (also saved as <code>admin-token</code> in its data folder).
   </p>
   <label class="field">
     <span>Master address</span>
@@ -32,7 +33,7 @@
   </label>
   {#if invalid}<p class="problem" role="alert">That does not look like an address.</p>{/if}
   <label class="field">
-    <span>Pairing token</span>
+    <span>Admin token</span>
     <input bind:value={token} type="password" autocomplete="off" required spellcheck="false" />
   </label>
   {#if problem}<p class="problem" role="alert">{problem}</p>{/if}

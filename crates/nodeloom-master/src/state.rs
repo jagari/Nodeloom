@@ -1,22 +1,130 @@
-//! Cluster state and scheduling. Everything here is synchronous and
+//! Cluster state, pairing and scheduling. Everything here is synchronous and
 //! lock-based so it can be unit-tested without a network.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
+    net::IpAddr,
     sync::{Mutex, MutexGuard},
+    time::Duration,
 };
 
-use nodeloom_core::{split::split_frames, validate::validate_payload};
+use nodeloom_core::{
+    auth::tokens_match, identity::PublicKey, split::split_frames, validate::validate_payload,
+};
 use nodeloom_proto::{
     ClusterSnapshot, JobId, JobView, MasterMessage, Metrics, NodeId, NodeInfo, NodeView,
-    RunnerKind, TaskId, TaskPayload, TaskSpec, TaskState, TaskView,
+    PairedDevice, PendingDevice, RunnerKind, TaskId, TaskPayload, TaskSpec, TaskState, TaskView,
 };
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
+
+use crate::devices::{ApprovedDevice, DeviceStore, Devices, StoreError};
 
 /// Jobs kept in memory; the oldest are dropped first.
 const MAX_JOBS: usize = 100;
 
+/// Reason sent to a machine whose key was removed from the cluster.
+pub const REMOVED: &str = "this machine was removed from the cluster; run \
+                           `nodeloom-agent reset-identity` on it and approve it again";
+const IGNORED: &str = "the cluster owner ignored this machine; it can ask again after \
+                       the master restarts";
+
 pub type NodeTx = mpsc::UnboundedSender<MasterMessage>;
+
+/// Limits that keep unapproved machines from crowding the dashboard, and
+/// how long a silent pending connection is kept.
+#[derive(Debug, Clone)]
+pub struct Settings {
+    pub max_pending: usize,
+    /// One address may hold this many requests; a newer one replaces the
+    /// oldest, so one noisy host cannot lock everyone else out.
+    pub max_pending_per_address: usize,
+    /// Ignored keys remembered until restart; the oldest are forgotten.
+    pub max_ignored: usize,
+    pub ping_interval: Duration,
+    /// A pending connection that sends nothing (not even a pong) for this
+    /// long is dropped, so dead peers do not linger in the list.
+    pub pending_idle_timeout: Duration,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            max_pending: 32,
+            max_pending_per_address: 2,
+            max_ignored: 256,
+            ping_interval: Duration::from_secs(15),
+            pending_idle_timeout: Duration::from_secs(45),
+        }
+    }
+}
+
+/// What to do with a machine that proved its key.
+pub enum Admission<'a> {
+    Approved,
+    /// It sent the right admin token; approve it without asking.
+    ApproveWithToken,
+    /// Wait for a person. Dropping the ticket withdraws the request.
+    Pending(PendingTicket<'a>, oneshot::Receiver<Decision>),
+    Rejected(String),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Decision {
+    Approved,
+    Rejected(String),
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum PairError {
+    #[error("no such machine")]
+    NotFound,
+    #[error("{0}")]
+    Conflict(String),
+    #[error("could not save the device list: {0}")]
+    Storage(String),
+}
+
+impl From<StoreError> for PairError {
+    fn from(e: StoreError) -> Self {
+        PairError::Storage(e.to_string())
+    }
+}
+
+struct PendingEntry {
+    /// Unique per connection; a ticket only removes its own entry.
+    seq: u64,
+    /// Place in the list. A reconnecting machine keeps it (see `classify`).
+    order: u64,
+    info: NodeInfo,
+    code: String,
+    address: Option<IpAddr>,
+    decision: oneshot::Sender<Decision>,
+}
+
+impl PendingEntry {
+    fn decide(self, decision: Decision) {
+        // The connection may already be gone; nothing to tell then.
+        let _ = self.decision.send(decision);
+    }
+}
+
+/// Keeps a pending request alive; dropping it removes the request.
+pub struct PendingTicket<'a> {
+    cluster: &'a Cluster,
+    public_key: String,
+    seq: u64,
+}
+
+impl Drop for PendingTicket<'_> {
+    fn drop(&mut self) {
+        let mut inner = self.cluster.lock();
+        if inner.pending.get(&self.public_key).map(|p| p.seq) == Some(self.seq) {
+            inner.pending.remove(&self.public_key);
+            drop(inner);
+            self.cluster.notify();
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum SubmitError {
@@ -30,6 +138,8 @@ struct NodeConn {
     info: NodeInfo,
     metrics: Option<Metrics>,
     tx: NodeTx,
+    /// Ends the session with this reason (sent as `Rejected`).
+    kick: oneshot::Sender<String>,
     generation: u64,
 }
 
@@ -69,6 +179,12 @@ struct Inner {
     next_job: u64,
     next_task: u64,
     next_generation: u64,
+    /// Changed only while holding `Cluster::store`, so saves never race.
+    devices: Devices,
+    /// Machines waiting for approval, by public key.
+    pending: HashMap<String, PendingEntry>,
+    next_pending: u64,
+    ignored: VecDeque<String>,
 }
 
 impl Inner {
@@ -142,6 +258,24 @@ impl Inner {
         }
     }
 
+    /// Once `id` is paired, anyone else waiting under that id is an impostor
+    /// or a stale copy.
+    fn reject_pending_claims(&mut self, id: &NodeId) {
+        let clashing: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|(_, p)| p.info.id == *id)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in clashing {
+            if let Some(entry) = self.pending.remove(&key) {
+                entry.decide(Decision::Rejected(format!(
+                    "another machine was approved as {id}"
+                )));
+            }
+        }
+    }
+
     fn running_tasks(&self, node: &NodeId) -> usize {
         self.jobs
             .values()
@@ -163,22 +297,49 @@ impl Inner {
 
 pub struct Cluster {
     inner: Mutex<Inner>,
+    /// Held across a whole approve or remove (save included), always before
+    /// `inner`. Disk writes happen here, never under `inner`.
+    store: Mutex<DeviceStore>,
     changed: broadcast::Sender<()>,
-    token: String,
+    admin_token: String,
+    settings: Settings,
 }
 
 impl Cluster {
-    pub fn new(token: impl Into<String>) -> Self {
+    /// A cluster that remembers paired machines only in memory.
+    pub fn new(admin_token: impl Into<String>) -> Self {
+        Self::with_store(admin_token, DeviceStore::in_memory())
+    }
+
+    pub fn with_store(admin_token: impl Into<String>, mut store: DeviceStore) -> Self {
         let (changed, _) = broadcast::channel(16);
+        let inner = Inner {
+            devices: store.take_loaded(),
+            ..Inner::default()
+        };
         Self {
-            inner: Mutex::new(Inner::default()),
+            inner: Mutex::new(inner),
+            store: Mutex::new(store),
             changed,
-            token: token.into(),
+            admin_token: admin_token.into(),
+            settings: Settings::default(),
         }
     }
 
-    pub fn token(&self) -> &str {
-        &self.token
+    pub fn with_settings(mut self, settings: Settings) -> Self {
+        self.settings = settings;
+        self
+    }
+
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    /// Checks the dashboard's admin token (also what agents may send to skip
+    /// approval). An empty admin token matches nothing, so a blank setting
+    /// can never open the cluster.
+    pub fn admin_token_matches(&self, provided: &str) -> bool {
+        !self.admin_token.trim().is_empty() && tokens_match(&self.admin_token, provided)
     }
 
     /// Fires whenever the snapshot changes.
@@ -196,10 +357,210 @@ impl Cluster {
         let _ = self.changed.send(());
     }
 
-    /// Registers a connected agent and returns a generation number that must
-    /// be passed to [`Cluster::unregister_node`].
-    pub fn register_node(&self, info: NodeInfo, tx: NodeTx) -> u64 {
+    fn lock_store(&self) -> MutexGuard<'_, DeviceStore> {
+        self.store.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Decides what happens to a machine that has proved `public_key`. A
+    /// machine that must wait is put on the pending list in the same step,
+    /// so nothing can approve or remove it in between.
+    pub fn classify(
+        &self,
+        info: &NodeInfo,
+        public_key: &PublicKey,
+        token: Option<&str>,
+        address: Option<IpAddr>,
+    ) -> Admission<'_> {
+        let key = public_key.as_hex();
         let mut inner = self.lock();
+        let devices = &inner.devices;
+        if devices.revoked.contains(key) {
+            return Admission::Rejected(REMOVED.into());
+        }
+        match devices.approved.get(&info.id) {
+            Some(d) if d.public_key == key => return Admission::Approved,
+            Some(_) => {
+                return Admission::Rejected(format!(
+                    "node id {} is already paired with another key; remove it in the \
+                     dashboard first",
+                    info.id
+                ));
+            }
+            None => {}
+        }
+        if let Some(other) = devices.id_of_key(key) {
+            return Admission::Rejected(format!("this key is already paired as {other}"));
+        }
+        if let Some(token) = token {
+            return if self.admin_token_matches(token) {
+                Admission::ApproveWithToken
+            } else {
+                Admission::Rejected("wrong token".into())
+            };
+        }
+        if inner.ignored.iter().any(|k| k == key) {
+            return Admission::Rejected(IGNORED.into());
+        }
+
+        // The same machine reconnecting replaces its own older request but
+        // keeps its place in the list, so reconnecting cannot shuffle the
+        // cards under the cursor of someone about to click Approve.
+        let mut order = None;
+        if let Some(old) = inner.pending.remove(key) {
+            order = Some(old.order);
+            old.decide(Decision::Rejected(
+                "replaced by a newer connection from this machine".into(),
+            ));
+        }
+        if let Some(address) = address {
+            let mut same: Vec<(u64, String)> = inner
+                .pending
+                .iter()
+                .filter(|(_, p)| p.address == Some(address))
+                .map(|(k, p)| (p.order, k.clone()))
+                .collect();
+            same.sort();
+            let excess =
+                (same.len() + 1).saturating_sub(self.settings.max_pending_per_address.max(1));
+            for (_, old) in same.into_iter().take(excess) {
+                if let Some(old) = inner.pending.remove(&old) {
+                    old.decide(Decision::Rejected(
+                        "replaced by a newer request from the same address".into(),
+                    ));
+                }
+            }
+        }
+        if inner.pending.len() >= self.settings.max_pending {
+            return Admission::Rejected("too many machines are waiting for approval".into());
+        }
+
+        inner.next_pending += 1;
+        let seq = inner.next_pending;
+        let order = order.unwrap_or(seq);
+        let (decision, receiver) = oneshot::channel();
+        inner.pending.insert(
+            key.to_owned(),
+            PendingEntry {
+                seq,
+                order,
+                info: info.clone(),
+                code: public_key.confirmation_code(),
+                address,
+                decision,
+            },
+        );
+        drop(inner);
+        self.notify();
+        Admission::Pending(
+            PendingTicket {
+                cluster: self,
+                public_key: key.to_owned(),
+                seq,
+            },
+            receiver,
+        )
+    }
+
+    /// Approves a waiting machine: saves it, then lets its connection in.
+    pub fn approve(&self, public_key: &str) -> Result<(), PairError> {
+        let store = self.lock_store();
+        let (info, mut devices) = {
+            let inner = self.lock();
+            let entry = inner.pending.get(public_key).ok_or(PairError::NotFound)?;
+            (entry.info.clone(), inner.devices.clone())
+        };
+        add_device(&mut devices, &info, public_key)?;
+        store.save(&devices)?;
+
+        let mut inner = self.lock();
+        inner.devices = devices;
+        if let Some(entry) = inner.pending.remove(public_key) {
+            entry.decide(Decision::Approved);
+        }
+        inner.reject_pending_claims(&info.id);
+        drop(inner);
+        self.notify();
+        Ok(())
+    }
+
+    /// Approves a machine that presented the admin token.
+    pub fn approve_with_token(&self, info: &NodeInfo, public_key: &str) -> Result<(), PairError> {
+        let store = self.lock_store();
+        let mut devices = self.lock().devices.clone();
+        if devices.is_approved(&info.id, public_key) {
+            return Ok(());
+        }
+        add_device(&mut devices, info, public_key)?;
+        store.save(&devices)?;
+        let mut inner = self.lock();
+        inner.devices = devices;
+        inner.reject_pending_claims(&info.id);
+        drop(inner);
+        self.notify();
+        Ok(())
+    }
+
+    /// Refuses a waiting machine until the master restarts.
+    pub fn ignore(&self, public_key: &str) -> Result<(), PairError> {
+        // Taken like approve does, so an approval already being saved
+        // finishes first and this then answers "not found" instead of both
+        // calls reporting success.
+        let _store = self.lock_store();
+        let mut inner = self.lock();
+        let entry = inner
+            .pending
+            .remove(public_key)
+            .ok_or(PairError::NotFound)?;
+        entry.decide(Decision::Rejected(IGNORED.into()));
+        inner.ignored.push_back(public_key.to_owned());
+        while inner.ignored.len() > self.settings.max_ignored {
+            inner.ignored.pop_front();
+        }
+        drop(inner);
+        self.notify();
+        Ok(())
+    }
+
+    /// Forgets a paired machine and refuses its key for good: disconnects it
+    /// now and hands its tasks to other machines.
+    pub fn remove_device(&self, id: &NodeId) -> Result<(), PairError> {
+        let store = self.lock_store();
+        let mut devices = self.lock().devices.clone();
+        let removed = devices.approved.remove(id).ok_or(PairError::NotFound)?;
+        devices.revoked.insert(removed.public_key);
+        store.save(&devices)?;
+
+        let mut inner = self.lock();
+        inner.devices = devices;
+        if let Some(conn) = inner.nodes.remove(id) {
+            let _ = conn.kick.send(REMOVED.into());
+        }
+        inner.requeue_tasks_of(id);
+        inner.dispatch();
+        drop(inner);
+        self.notify();
+        Ok(())
+    }
+
+    /// Registers the connection of an approved machine and returns a
+    /// generation number for [`Cluster::unregister_node`]. Approval is
+    /// checked again under the same lock that removal takes, so a machine
+    /// removed a moment ago cannot slip in.
+    pub fn admit(
+        &self,
+        info: NodeInfo,
+        public_key: &str,
+        tx: NodeTx,
+        kick: oneshot::Sender<String>,
+    ) -> Result<u64, String> {
+        let mut inner = self.lock();
+        if !inner.devices.is_approved(&info.id, public_key) {
+            return Err(if inner.devices.revoked.contains(public_key) {
+                REMOVED.into()
+            } else {
+                "this machine is not approved".into()
+            });
+        }
         let id = info.id.clone();
         // A reconnecting agent knows nothing about tasks of its old session.
         inner.requeue_tasks_of(&id);
@@ -211,13 +572,14 @@ impl Cluster {
                 info,
                 metrics: None,
                 tx,
+                kick,
                 generation,
             },
         );
         inner.dispatch();
         drop(inner);
         self.notify();
-        generation
+        Ok(generation)
     }
 
     /// Removes the node unless a newer connection has already replaced it.
@@ -332,8 +694,70 @@ impl Cluster {
             .iter()
             .map(|(id, tasks)| job_view(*id, tasks))
             .collect();
-        ClusterSnapshot { nodes, jobs }
+        let mut pending: Vec<(u64, PendingDevice)> = inner
+            .pending
+            .iter()
+            .map(|(key, p)| {
+                (
+                    p.order,
+                    PendingDevice {
+                        public_key: key.clone(),
+                        code: p.code.clone(),
+                        info: p.info.clone(),
+                        address: p.address.map(|a| a.to_string()),
+                    },
+                )
+            })
+            .collect();
+        pending.sort_by_key(|(order, _)| *order);
+        let devices = inner
+            .devices
+            .approved
+            .values()
+            .map(|d| PairedDevice {
+                id: d.id.clone(),
+                name: d.name.clone(),
+            })
+            .collect();
+        ClusterSnapshot {
+            nodes,
+            jobs,
+            pending: pending.into_iter().map(|(_, p)| p).collect(),
+            devices,
+        }
     }
+}
+
+/// Adds `info` as approved under `public_key`, unless its id or key is
+/// already taken by something else.
+fn add_device(devices: &mut Devices, info: &NodeInfo, public_key: &str) -> Result<(), PairError> {
+    if devices.revoked.contains(public_key) {
+        return Err(PairError::Conflict(REMOVED.into()));
+    }
+    if let Some(existing) = devices.approved.get(&info.id)
+        && existing.public_key != public_key
+    {
+        return Err(PairError::Conflict(format!(
+            "{} is already paired with another key; remove it first",
+            info.id
+        )));
+    }
+    if let Some(other) = devices.id_of_key(public_key)
+        && *other != info.id
+    {
+        return Err(PairError::Conflict(format!(
+            "this key is already paired as {other}"
+        )));
+    }
+    devices.approved.insert(
+        info.id.clone(),
+        ApprovedDevice {
+            id: info.id.clone(),
+            name: info.hostname.clone(),
+            public_key: public_key.to_owned(),
+        },
+    );
+    Ok(())
 }
 
 fn job_view(job_id: JobId, tasks: &[TaskEntry]) -> JobView {
@@ -367,13 +791,21 @@ mod tests {
         }
     }
 
+    fn key_of(id: &str) -> String {
+        format!("key-{id}")
+    }
+
+    /// Pairs `id` (if needed) and connects it.
     fn connect(
         cluster: &Cluster,
         id: &str,
         runners: &[RunnerKind],
     ) -> (u64, mpsc::UnboundedReceiver<MasterMessage>) {
+        let info = node(id, runners);
+        cluster.approve_with_token(&info, &key_of(id)).unwrap();
         let (tx, rx) = mpsc::unbounded_channel();
-        (cluster.register_node(node(id, runners), tx), rx)
+        let (kick, _) = oneshot::channel();
+        (cluster.admit(info, &key_of(id), tx, kick).unwrap(), rx)
     }
 
     fn assigned(rx: &mut mpsc::UnboundedReceiver<MasterMessage>) -> Vec<TaskSpec> {
@@ -538,5 +970,269 @@ mod tests {
         let snap = cluster.snapshot();
         assert_eq!(snap.jobs.len(), MAX_JOBS);
         assert_eq!(snap.jobs.last().unwrap().job_id, JobId(MAX_JOBS as u64 + 4));
+    }
+
+    // --- pairing ---
+
+    use nodeloom_core::identity::DeviceKey;
+    use std::net::Ipv4Addr;
+
+    fn new_key() -> PublicKey {
+        DeviceKey::generate().unwrap().public_key()
+    }
+
+    fn ip(last: u8) -> Option<IpAddr> {
+        Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, last)))
+    }
+
+    fn pending_keys(cluster: &Cluster) -> Vec<String> {
+        cluster
+            .snapshot()
+            .pending
+            .into_iter()
+            .map(|p| p.public_key)
+            .collect()
+    }
+
+    #[test]
+    fn unknown_machine_waits_and_approval_lets_it_in() {
+        let cluster = Cluster::new("admin");
+        let key = new_key();
+        let info = node("a", &[RunnerKind::Fake]);
+        let Admission::Pending(ticket, mut decision) = cluster.classify(&info, &key, None, ip(5))
+        else {
+            panic!("expected pending");
+        };
+        let snap = cluster.snapshot();
+        assert_eq!(snap.pending.len(), 1);
+        assert_eq!(snap.pending[0].code, key.confirmation_code());
+        assert_eq!(snap.pending[0].address.as_deref(), Some("192.168.1.5"));
+        assert!(snap.nodes.is_empty() && snap.devices.is_empty());
+
+        // A pending machine is not a node: jobs cannot use it.
+        assert_eq!(
+            cluster.submit_job(fake(1, 2)).unwrap_err(),
+            SubmitError::NoCapableNodes(RunnerKind::Fake)
+        );
+
+        cluster.approve(key.as_hex()).unwrap();
+        assert_eq!(decision.try_recv(), Ok(Decision::Approved));
+        drop(ticket);
+        let snap = cluster.snapshot();
+        assert!(snap.pending.is_empty());
+        assert_eq!(snap.devices.len(), 1);
+        assert!(matches!(
+            cluster.classify(&info, &key, None, ip(5)),
+            Admission::Approved
+        ));
+    }
+
+    #[test]
+    fn dropping_the_ticket_withdraws_the_request() {
+        let cluster = Cluster::new("admin");
+        let admission = cluster.classify(&node("a", &[]), &new_key(), None, None);
+        assert_eq!(cluster.snapshot().pending.len(), 1);
+        drop(admission);
+        assert!(cluster.snapshot().pending.is_empty());
+    }
+
+    #[test]
+    fn an_empty_admin_token_matches_nothing() {
+        let cluster = Cluster::new("");
+        assert!(!cluster.admin_token_matches(""));
+        assert!(matches!(
+            cluster.classify(&node("a", &[]), &new_key(), Some(""), None),
+            Admission::Rejected(_)
+        ));
+    }
+
+    #[test]
+    fn token_decides_without_waiting() {
+        let cluster = Cluster::new("admin");
+        let info = node("a", &[]);
+        assert!(matches!(
+            cluster.classify(&info, &new_key(), Some("admin"), None),
+            Admission::ApproveWithToken
+        ));
+        assert!(matches!(
+            cluster.classify(&info, &new_key(), Some("nope"), None),
+            Admission::Rejected(r) if r == "wrong token"
+        ));
+        assert!(cluster.snapshot().pending.is_empty());
+    }
+
+    #[test]
+    fn a_paired_id_with_another_key_is_rejected_and_cannot_be_approved() {
+        let cluster = Cluster::new("admin");
+        let info = node("a", &[]);
+        cluster
+            .approve_with_token(&info, new_key().as_hex())
+            .unwrap();
+        let impostor = new_key();
+        assert!(matches!(
+            cluster.classify(&info, &impostor, None, None),
+            Admission::Rejected(_)
+        ));
+        assert!(matches!(
+            cluster.classify(&info, &impostor, Some("admin"), None),
+            Admission::Rejected(_)
+        ));
+        assert!(matches!(
+            cluster.approve_with_token(&info, impostor.as_hex()),
+            Err(PairError::Conflict(_))
+        ));
+    }
+
+    #[test]
+    fn approving_one_claimant_rejects_others_with_the_same_id() {
+        let cluster = Cluster::new("admin");
+        let info = node("a", &[]);
+        let (real, fake_key) = (new_key(), new_key());
+        let Admission::Pending(_t1, mut d1) = cluster.classify(&info, &real, None, ip(1)) else {
+            panic!()
+        };
+        let Admission::Pending(_t2, mut d2) = cluster.classify(&info, &fake_key, None, ip(2))
+        else {
+            panic!()
+        };
+        cluster.approve(real.as_hex()).unwrap();
+        assert_eq!(d1.try_recv(), Ok(Decision::Approved));
+        assert!(matches!(d2.try_recv(), Ok(Decision::Rejected(_))));
+        assert!(pending_keys(&cluster).is_empty());
+        assert_eq!(cluster.approve(fake_key.as_hex()), Err(PairError::NotFound));
+    }
+
+    #[test]
+    fn ignored_machine_is_refused_until_restart() {
+        let cluster = Cluster::new("admin");
+        let key = new_key();
+        let info = node("a", &[]);
+        let Admission::Pending(_t, mut d) = cluster.classify(&info, &key, None, None) else {
+            panic!()
+        };
+        cluster.ignore(key.as_hex()).unwrap();
+        assert!(matches!(d.try_recv(), Ok(Decision::Rejected(_))));
+        assert!(matches!(
+            cluster.classify(&info, &key, None, None),
+            Admission::Rejected(_)
+        ));
+        assert!(pending_keys(&cluster).is_empty());
+        assert_eq!(cluster.ignore(key.as_hex()), Err(PairError::NotFound));
+    }
+
+    #[test]
+    fn same_machine_replaces_its_request_and_one_address_holds_two() {
+        let cluster = Cluster::new("admin");
+        let key = new_key();
+        let Admission::Pending(_old, mut old) =
+            cluster.classify(&node("a", &[]), &key, None, ip(9))
+        else {
+            panic!()
+        };
+        let k0 = new_key();
+        let _other = cluster.classify(&node("z", &[]), &k0, None, ip(20));
+        let _new = cluster.classify(&node("a", &[]), &key, None, ip(9));
+        assert!(matches!(old.try_recv(), Ok(Decision::Rejected(_))));
+        assert_eq!(
+            pending_keys(&cluster),
+            [key.as_hex(), k0.as_hex()],
+            "a reconnect keeps its place"
+        );
+        // The replaced connection ending must not take the new request along.
+        drop(_old);
+        assert_eq!(pending_keys(&cluster), [key.as_hex(), k0.as_hex()]);
+        drop(_other);
+
+        // Two more from the same address push the oldest out.
+        let (k2, k3) = (new_key(), new_key());
+        let _b = cluster.classify(&node("b", &[]), &k2, None, ip(9));
+        let _c = cluster.classify(&node("c", &[]), &k3, None, ip(9));
+        assert_eq!(pending_keys(&cluster), [k2.as_hex(), k3.as_hex()]);
+        // Another address is unaffected.
+        let k4 = new_key();
+        let _d = cluster.classify(&node("d", &[]), &k4, None, ip(10));
+        assert_eq!(pending_keys(&cluster).len(), 3);
+    }
+
+    #[test]
+    fn pending_list_is_capped() {
+        let cluster = Cluster::new("admin").with_settings(Settings {
+            max_pending: 2,
+            ..Settings::default()
+        });
+        let _a = cluster.classify(&node("a", &[]), &new_key(), None, ip(1));
+        let _b = cluster.classify(&node("b", &[]), &new_key(), None, ip(2));
+        assert!(matches!(
+            cluster.classify(&node("c", &[]), &new_key(), None, ip(3)),
+            Admission::Rejected(_)
+        ));
+    }
+
+    #[test]
+    fn removal_kicks_the_machine_requeues_its_work_and_burns_the_key() {
+        let cluster = Cluster::new("admin");
+        let a = node("a", &[RunnerKind::Fake]);
+        let key = new_key();
+        cluster.approve_with_token(&a, key.as_hex()).unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (kick, mut kicked) = oneshot::channel();
+        cluster.admit(a.clone(), key.as_hex(), tx, kick).unwrap();
+        let (_, mut b) = connect(&cluster, "b", &[RunnerKind::Fake]);
+        cluster.submit_job(fake(1, 10)).unwrap();
+        assert_eq!(assigned(&mut rx).len(), 1);
+        assert_eq!(assigned(&mut b).len(), 1);
+
+        cluster.remove_device(&a.id).unwrap();
+        assert_eq!(kicked.try_recv(), Ok(REMOVED.to_owned()));
+        assert_eq!(assigned(&mut b).len(), 1, "a's task moved to b");
+        let snap = cluster.snapshot();
+        assert_eq!(snap.nodes.len(), 1);
+        assert_eq!(snap.devices.len(), 1);
+
+        // The key is dead: no admit, no approval, not even with the token.
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let (kick, _) = oneshot::channel();
+        assert_eq!(
+            cluster.admit(a.clone(), key.as_hex(), tx, kick),
+            Err(REMOVED.to_owned())
+        );
+        assert!(matches!(
+            cluster.classify(&a, &key, Some("admin"), None),
+            Admission::Rejected(r) if r == REMOVED
+        ));
+        assert_eq!(cluster.remove_device(&a.id), Err(PairError::NotFound));
+    }
+
+    #[test]
+    fn approvals_and_removals_persist() {
+        let dir = tempfile::tempdir().unwrap();
+        let open = || Cluster::with_store("admin", DeviceStore::open(dir.path()).unwrap());
+        let (kept, gone) = (new_key(), new_key());
+        let (a, b) = (node("a", &[]), node("b", &[]));
+        {
+            let cluster = open();
+            cluster.approve_with_token(&a, kept.as_hex()).unwrap();
+            let Admission::Pending(_t, _d) = cluster.classify(&b, &gone, None, None) else {
+                panic!()
+            };
+            cluster.approve(gone.as_hex()).unwrap();
+            cluster.remove_device(&b.id).unwrap();
+        }
+        let cluster = open();
+        assert!(matches!(
+            cluster.classify(&a, &kept, None, None),
+            Admission::Approved
+        ));
+        assert!(matches!(
+            cluster.classify(&b, &gone, None, None),
+            Admission::Rejected(r) if r == REMOVED
+        ));
+        let names: Vec<_> = cluster
+            .snapshot()
+            .devices
+            .into_iter()
+            .map(|d| d.id.0)
+            .collect();
+        assert_eq!(names, ["a"]);
     }
 }

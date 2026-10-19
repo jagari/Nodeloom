@@ -1,5 +1,7 @@
-//! The Nodeloom agent: connects to a master, reports resource usage and runs
-//! the tasks it is assigned.
+//! The Nodeloom agent: connects to a master, proves its identity, reports
+//! resource usage and runs the tasks it is assigned.
+
+pub mod identity;
 
 use std::{collections::HashMap, time::Duration};
 
@@ -10,16 +12,23 @@ use nodeloom_core::{
     metrics::{MetricsCollector, describe_node},
     validate::validate_payload,
 };
-use nodeloom_proto::{AgentMessage, MasterMessage, NodeId, PROTOCOL_VERSION, TaskId, TaskSpec};
+use nodeloom_proto::{AgentMessage, MasterMessage, PROTOCOL_VERSION, TaskId, TaskSpec};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{info, warn};
 
+pub use identity::Identity;
+
+/// While waiting for approval the master pings every 15 seconds. Hearing
+/// nothing for this long means the connection is dead; reconnect.
+const PENDING_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
 pub struct AgentConfig {
     /// Full URL of the master's agent endpoint, e.g. `ws://192.168.1.5:7878/ws/agent`.
     pub master_url: String,
-    pub token: String,
-    pub node_id: NodeId,
+    pub identity: Identity,
+    /// The master's admin token, to join without approval in the dashboard.
+    pub token: Option<String>,
     pub runners: RunnerSet,
     pub metrics_interval: Duration,
 }
@@ -43,24 +52,61 @@ enum TaskEvent {
 /// Connects once and serves until the connection ends. Returns `Ok(())` when
 /// the master closes the connection cleanly.
 pub async fn run_once(config: &AgentConfig) -> Result<()> {
+    session(config, &mut false).await
+}
+
+/// Like [`run_once`]; sets `welcomed` once the master has let us in.
+async fn session(config: &AgentConfig, welcomed: &mut bool) -> Result<()> {
     let (socket, _) = tokio_tungstenite::connect_async(&config.master_url)
         .await
         .with_context(|| format!("connecting to {}", config.master_url))?;
     let (mut sink, mut stream) = socket.split();
+    let identity = &config.identity;
 
     let hello = AgentMessage::Hello {
         protocol: PROTOCOL_VERSION,
+        public_key: identity.key.public_key().as_hex().to_owned(),
+        info: describe_node(identity.node_id.clone(), config.runners.kinds()),
         token: config.token.clone(),
-        info: describe_node(config.node_id.clone(), config.runners.kinds()),
     };
     sink.send(Message::text(serde_json::to_string(&hello)?))
         .await?;
 
     match next_master_message(&mut stream).await? {
-        Some(MasterMessage::Welcome) => info!("paired with master"),
+        Some(MasterMessage::Challenge { nonce }) => {
+            let proof = AgentMessage::Proof {
+                signature: identity.key.sign_hello(&nonce, &identity.node_id),
+            };
+            sink.send(Message::text(serde_json::to_string(&proof)?))
+                .await?;
+        }
         Some(MasterMessage::Rejected { reason }) => bail!("master rejected us: {reason}"),
-        other => bail!("unexpected first message from master: {other:?}"),
+        None => bail!("master closed the connection during the handshake (different version?)"),
+        Some(other) => bail!("unexpected first message from master: {other:?}"),
     }
+
+    let mut announced = false;
+    loop {
+        match next_master_message_within(&mut stream, PENDING_IDLE_TIMEOUT).await? {
+            Some(MasterMessage::Welcome) => break,
+            Some(MasterMessage::Pending) => {
+                if !announced {
+                    info!(
+                        "waiting for approval on {}. Confirmation code: {}. Approve this \
+                         machine in the Nodeloom dashboard only if it shows the same code.",
+                        config.master_url,
+                        identity.confirmation_code()
+                    );
+                    announced = true;
+                }
+            }
+            Some(MasterMessage::Rejected { reason }) => bail!("master rejected us: {reason}"),
+            None => bail!("master closed the connection before deciding"),
+            Some(other) => bail!("unexpected message during the handshake: {other:?}"),
+        }
+    }
+    info!("joined the cluster at {}", config.master_url);
+    *welcomed = true;
 
     let (event_tx, mut event_rx) = mpsc::channel::<TaskEvent>(256);
     let mut running: HashMap<TaskId, JoinHandle<()>> = HashMap::new();
@@ -104,6 +150,10 @@ pub async fn run_once(config: &AgentConfig) -> Result<()> {
                         handle.abort();
                     }
                 }
+                // Sent when the machine is removed from the cluster.
+                Ok(Some(MasterMessage::Rejected { reason })) => {
+                    break Err(anyhow::anyhow!("master rejected us: {reason}"));
+                }
                 Ok(Some(other)) => warn!("ignoring unexpected message: {other:?}"),
                 Ok(None) => break Ok(()),
                 Err(e) => break Err(e),
@@ -117,13 +167,19 @@ pub async fn run_once(config: &AgentConfig) -> Result<()> {
     result
 }
 
-/// Reconnects forever with exponential backoff (1s up to 30s).
+/// Reconnects forever with exponential backoff (1s up to 30s). A session
+/// that got past the handshake resets the backoff, so a master restart is
+/// followed by a quick reconnect.
 pub async fn run_forever(config: AgentConfig) -> ! {
     let mut delay = Duration::from_secs(1);
     loop {
-        match run_once(&config).await {
+        let mut welcomed = false;
+        match session(&config, &mut welcomed).await {
             Ok(()) => info!("master closed the connection"),
             Err(e) => warn!("connection ended: {e:#}"),
+        }
+        if welcomed {
+            delay = Duration::from_secs(1);
         }
         tokio::time::sleep(delay).await;
         delay = (delay * 2).min(Duration::from_secs(30));
@@ -189,4 +245,27 @@ where
         }
     }
     Ok(None)
+}
+
+/// Like [`next_master_message`], but gives up when no frame at all (pings
+/// included) arrives for `idle`.
+async fn next_master_message_within<S>(
+    stream: &mut S,
+    idle: Duration,
+) -> Result<Option<MasterMessage>>
+where
+    S: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    loop {
+        let frame = match tokio::time::timeout(idle, stream.next()).await {
+            Err(_) => bail!("heard nothing from the master for {}s", idle.as_secs()),
+            Ok(None) => return Ok(None),
+            Ok(Some(frame)) => frame?,
+        };
+        match frame {
+            Message::Text(text) => return Ok(Some(serde_json::from_str(text.as_str())?)),
+            Message::Close(_) => return Ok(None),
+            _ => {}
+        }
+    }
 }

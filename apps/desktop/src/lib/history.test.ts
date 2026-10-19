@@ -15,7 +15,7 @@ const m = (t: number, cpu: number, used = 50): Metrics => ({
   memory_total_bytes: 100,
   timestamp_ms: t,
 });
-const snap = (...nodes: NodeView[]): ClusterSnapshot => ({ nodes, jobs: [] });
+const snap = (...nodes: NodeView[]): ClusterSnapshot => ({ nodes, jobs: [], pending: [], devices: [] });
 
 describe('updateHistory', () => {
   it('adds a sample per new timestamp and ignores repeats', () => {

@@ -7,7 +7,8 @@
 use serde::{Deserialize, Serialize};
 
 /// Bumped whenever a message changes in a way older peers cannot parse.
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Version 2 replaced the shared pairing token with per-device keys.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// mDNS service type the master advertises and agents browse for.
 pub const MDNS_SERVICE_TYPE: &str = "_nodeloom._tcp.local.";
@@ -15,7 +16,7 @@ pub const MDNS_SERVICE_TYPE: &str = "_nodeloom._tcp.local.";
 /// Default TCP port of the master's HTTP/WebSocket API.
 pub const DEFAULT_PORT: u16 = 7878;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NodeId(pub String);
 
 impl std::fmt::Display for NodeId {
@@ -137,15 +138,28 @@ pub struct TaskSpec {
 }
 
 /// Messages an agent sends to the master.
+///
+/// A connection opens with `Hello`, the master answers `Challenge`, the agent
+/// answers `Proof`, and the master decides: `Welcome`, `Pending` (waiting for
+/// someone to approve the machine in the dashboard) or `Rejected`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentMessage {
     /// First message on every connection.
     Hello {
         protocol: u32,
-        /// Pairing token; the master closes the connection if it is wrong.
-        token: String,
+        /// The machine's Ed25519 public key, 64 lowercase hex characters.
+        public_key: String,
         info: NodeInfo,
+        /// The master's admin token, to skip approval in the dashboard.
+        /// Optional; agents only send it to a master given explicitly.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token: Option<String>,
+    },
+    /// Answer to [`MasterMessage::Challenge`]: the challenge signed with the
+    /// machine's key, as hex.
+    Proof {
+        signature: String,
     },
     Metrics(Metrics),
     TaskProgress {
@@ -166,10 +180,22 @@ pub enum AgentMessage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MasterMessage {
+    /// Random hex the agent must sign, so a recorded handshake cannot be
+    /// replayed.
+    Challenge {
+        nonce: String,
+    },
     Welcome,
-    Rejected { reason: String },
+    /// The machine is not approved yet. The connection stays open and the
+    /// master sends `Welcome` or `Rejected` once someone decides.
+    Pending,
+    Rejected {
+        reason: String,
+    },
     AssignTask(TaskSpec),
-    CancelTask { task_id: TaskId },
+    CancelTask {
+        task_id: TaskId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,11 +232,34 @@ pub struct NodeView {
     pub busy_tasks: usize,
 }
 
+/// A machine waiting for approval, as shown in the dashboard.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingDevice {
+    /// Identifies the request in the approve and ignore endpoints.
+    pub public_key: String,
+    /// Six digits the machine also shows; compare before approving.
+    pub code: String,
+    pub info: NodeInfo,
+    /// IP address the request came from, when known.
+    pub address: Option<String>,
+}
+
+/// An approved machine, whether or not it is connected right now.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PairedDevice {
+    pub id: NodeId,
+    /// Hostname at approval time.
+    pub name: String,
+}
+
 /// Full cluster state served to UI clients.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct ClusterSnapshot {
+    /// Approved machines that are connected now.
     pub nodes: Vec<NodeView>,
     pub jobs: Vec<JobView>,
+    pub pending: Vec<PendingDevice>,
+    pub devices: Vec<PairedDevice>,
 }
 
 /// Request body for creating a job through the master's HTTP API.
@@ -234,6 +283,31 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"task_progress""#));
         assert_eq!(serde_json::from_str::<AgentMessage>(&json).unwrap(), msg);
+    }
+
+    #[test]
+    fn hello_omits_a_missing_token_and_handshake_variants_are_tagged() {
+        let hello = AgentMessage::Hello {
+            protocol: PROTOCOL_VERSION,
+            public_key: "ab".into(),
+            info: NodeInfo {
+                id: NodeId("a".into()),
+                hostname: "h".into(),
+                os: "o".into(),
+                arch: "x".into(),
+                cpu_cores: 1,
+                total_memory_bytes: 1,
+                runners: vec![],
+            },
+            token: None,
+        };
+        let json = serde_json::to_string(&hello).unwrap();
+        assert!(!json.contains("token"));
+        assert_eq!(serde_json::from_str::<AgentMessage>(&json).unwrap(), hello);
+        assert_eq!(
+            serde_json::to_string(&MasterMessage::Pending).unwrap(),
+            r#"{"type":"pending"}"#
+        );
     }
 
     #[test]
