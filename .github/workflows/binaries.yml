@@ -1,0 +1,75 @@
+name: binaries
+
+# Release builds of the agent and master for every supported machine, kept
+# as downloadable artifacts for testing on real devices (Raspberry Pi,
+# Jetson, Windows on ARM). Runs on main and on demand; a pull request runs it
+# only when this file changes, to keep CI minutes down.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  pull_request:
+    paths: ['.github/workflows/binaries.yml']
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds are static (musl): Raspberry Pi OS and the Ubuntu
+          # releases behind JetPack ship older glibc than the build runners,
+          # and a glibc-linked binary would refuse to start there (D14).
+          - { name: linux-x64, runner: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          - { name: linux-arm64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+          - { name: windows-x64, runner: windows-latest, target: x86_64-pc-windows-msvc }
+          - { name: windows-arm64, runner: windows-11-arm, target: aarch64-pc-windows-msvc }
+          - { name: macos-arm64, runner: macos-latest, target: aarch64-apple-darwin }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install rustup if the image has none
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+            $arch = if ($env:RUNNER_ARCH -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
+            Invoke-WebRequest "https://static.rust-lang.org/rustup/dist/$arch-pc-windows-msvc/rustup-init.exe" -OutFile rustup-init.exe
+            .\rustup-init.exe -y --default-toolchain none --profile minimal
+            Add-Content $env:GITHUB_PATH "$env:USERPROFILE\.cargo\bin"
+          }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p nodeloom-agent -p nodeloom-master
+      - name: Collect and smoke-test
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="target/${{ matrix.target }}/release"
+          out="dist/nodeloom-${{ matrix.name }}"
+          mkdir -p "$out"
+          ext=""
+          if [[ "${{ runner.os }}" == "Windows" ]]; then ext=".exe"; fi
+          for bin in nodeloom-agent nodeloom-master; do
+            cp "$src/$bin$ext" "$out/"
+            # Built on the same architecture it targets, so it can run here.
+            "$out/$bin$ext" --version
+          done
+          if [[ "${{ matrix.target }}" == *-musl ]]; then
+            # Must not depend on the system's C library.
+            file "$out/nodeloom-agent" | tee /dev/stderr | grep -q "static"
+          fi
+          cp LICENSE NOTICE "$out/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nodeloom-${{ matrix.name }}
+          path: dist/nodeloom-${{ matrix.name }}
+          retention-days: 30
+          if-no-files-found: error

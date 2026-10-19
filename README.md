@@ -66,6 +66,13 @@ master on one machine and an agent on each machine; agents find the master via
 mDNS when `--master` is omitted. Traffic is plain HTTP/WebSocket for now, so
 use it only on a network you trust.
 
+## Prebuilt binaries
+
+Every push to `main` builds the agent and master for Linux x64/arm64
+(static, so they also run on Raspberry Pi OS and Jetson), Windows x64/arm64
+and macOS arm64. Download them from the latest run of the `binaries`
+workflow in the Actions tab (kept for 30 days).
+
 ## Development
 
 ```sh
