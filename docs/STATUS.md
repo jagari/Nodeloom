@@ -24,7 +24,7 @@
 | 맥·윈도우 실기기, Thunderbolt | **미검증** | |
 | 작업 입력·결과 파일 전송 | 미착수 | 로드맵 P1. 지금 Blender 결과는 각 기기의 `renders/`에 남음 |
 | GPU 지표 (NVIDIA / Apple) | 미착수 | 로드맵 P0 |
-| linux-arm64, windows-arm64 빌드 | 미착수 | 로드맵 P0 |
+| linux-arm64, windows-arm64 빌드 | CI에서 빌드·테스트 | 네이티브 ARM 러너에서 fmt·clippy·테스트(D14). 배포용 바이너리는 `binaries` 워크플로 산출물. **라즈베리파이·Jetson·윈도우 ARM 실기기 미검증**(#24) |
 | Whisper 배치 전사 플러그인 | 미착수 | 로드맵 P1 |
 | AI 엔진 감지 플러그인 (Ollama, llama.cpp, exo) | 미착수 | 로드맵 P3 |
 | 기기 간 링크 측정 | 미착수 | 로드맵 P1 |
@@ -36,6 +36,7 @@
 
 - Rust: 89개 (proto 5, core 28, agent 6, Blender 러너 4, master 단위 27, master 통합 19)
 - UI: 29개 (`apps/desktop/src/lib/*.test.ts`)
-- CI: GitHub Actions에서 실행 중이다(Rust 3개 OS, UI, 데스크톱 셸 3개 OS).
+- CI: GitHub Actions에서 실행 중이다(Rust 5개 러너: 리눅스 x64·arm64, 맥 arm64, 윈도우 x64·arm64 / UI / 데스크톱 셸 3개 OS).
+  - `binaries` 워크플로가 `main`에 들어갈 때마다 에이전트·마스터 릴리스 바이너리 5종(linux-x64·arm64는 정적 링크, windows-x64·arm64, macos-arm64)을 만들어 30일간 산출물로 둔다. 데스크톱 셸(Tauri)의 ARM 빌드는 아직 없다.
   - 첫 실행(`c7090cf`)에서 Rust 작업이 실패했다. CI의 Rust 1.99 clippy가 새로 잡는 `result_large_err` 경고 때문이었고, 수정했다.
   - 데스크톱 셸은 맥·윈도우·리눅스에서 **빌드만** 성공했고, 실행은 확인하지 않았다.

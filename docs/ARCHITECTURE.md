@@ -179,3 +179,16 @@ master → agent   Rejected { reason }                    기기가 제거되면
 
 - Rust 워크스페이스는 `crates/*`만 포함한다. Tauri 셸(`apps/desktop/src-tauri`)은 GUI 시스템 라이브러리가 필요해서 워크스페이스에서 빼고 따로 빌드한다.
 - UI는 Vite + Svelte 5 + TypeScript 6이다. svelte-check가 TypeScript 7을 단독으로 지원하지 않아 6에 고정했다.
+- 지원 플랫폼과 빌드(D14):
+
+| 플랫폼 | 타깃 | CI 테스트 | 배포 바이너리 |
+|---|---|---|---|
+| 리눅스 x64 | `x86_64-unknown-linux-musl` | `ubuntu-latest` | 정적 링크 |
+| 리눅스 arm64 (라즈베리파이 4·5, Jetson) | `aarch64-unknown-linux-musl` | `ubuntu-24.04-arm` | 정적 링크 |
+| 윈도우 x64 | `x86_64-pc-windows-msvc` | `windows-latest` | |
+| 윈도우 arm64 | `aarch64-pc-windows-msvc` | `windows-11-arm` | |
+| macOS arm64 | `aarch64-apple-darwin` | `macos-latest` | |
+
+  - 테스트는 각 아키텍처의 러너에서 그대로 돌린다(교차 컴파일 아님). CI 테스트는 glibc 빌드로, 배포 바이너리는 위 타깃으로 만든다.
+  - 리눅스 배포 바이너리를 musl 정적 링크로 만드는 이유: 라즈베리파이 OS(Bookworm, glibc 2.36)와 JetPack(Ubuntu 20.04·22.04, glibc 2.31·2.35)은 빌드 러너(Ubuntu 24.04, glibc 2.39)보다 glibc가 오래돼, glibc에 링크한 바이너리는 실행되지 않는다. 의존성에 C 코드가 없어 musl용 별도 도구 없이 빌드된다.
+  - 의존성에 C 코드나 OpenSSL을 넣으면 이 전제가 깨진다. 넣기 전에 musl·윈도우 ARM 빌드를 확인한다.
