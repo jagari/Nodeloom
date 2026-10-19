@@ -1,14 +1,19 @@
-import type { NodeId, NodeView } from './types';
+import type { NodeId } from './types';
+
+export interface Named {
+  id: NodeId;
+  hostname: string;
+}
 
 /**
- * Display name per node. Hostnames are used as-is unless two machines share
- * one (common with default names like "MacBook-Pro"); those get a short id
- * suffix, just long enough to tell them apart.
+ * Display name per machine. Hostnames are used as-is unless two machines
+ * share one (common with default names like "MacBook-Pro"); those get a short
+ * id suffix, just long enough to tell them apart.
  */
-export function displayNames(nodes: NodeView[]): Map<NodeId, string> {
+export function displayNames(machines: Named[]): Map<NodeId, string> {
   const byHost = new Map<string, NodeId[]>();
-  for (const { info } of nodes) {
-    byHost.set(info.hostname, [...(byHost.get(info.hostname) ?? []), info.id]);
+  for (const { id, hostname } of machines) {
+    byHost.set(hostname, [...(byHost.get(hostname) ?? []), id]);
   }
 
   const names = new Map<NodeId, string>();

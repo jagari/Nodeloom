@@ -5,10 +5,10 @@ Linux boxes, Raspberry Pis, Jetsons) into one pool: install the agent, approve
 the device once, and it shows up on a shared dashboard. Then drop in a batch of
 files (first plugin: Whisper transcription) and the work is split across them.
 
-> **Status: early development.** Today the code pools machines with a shared
-> token and distributes Blender frame ranges (on hold). Plug-and-play pairing,
-> arm64 builds and the first batch plugin are next. See
-> [docs/STRATEGY.md](docs/STRATEGY.md).
+> **Status: early development.** Today a new machine pairs by one approval in
+> the dashboard (matching a six-digit code), and the cluster distributes test
+> and Blender frame-range jobs (Blender on hold). arm64 builds, installers and
+> the first batch plugin are next. See [docs/STRATEGY.md](docs/STRATEGY.md).
 
 ## What it is not
 
@@ -38,7 +38,7 @@ Chat-based LLMs that cannot read the repository: paste the output of
 | Path | Purpose |
 |---|---|
 | `crates/nodeloom-proto` | Wire types shared by every component |
-| `crates/nodeloom-core` | Frame splitting, `Runner` trait, metrics, token check |
+| `crates/nodeloom-core` | Frame splitting, `Runner` trait, metrics, device keys, token check |
 | `crates/nodeloom-agent` | Daemon that runs on every machine |
 | `crates/nodeloom-master` | Cluster state, scheduling, HTTP/WebSocket API |
 | `crates/nodeloom-runner-blender` | Runs `blender -b` for a frame range |
@@ -47,24 +47,31 @@ Chat-based LLMs that cannot read the repository: paste the output of
 ## Security model
 
 Agents never accept arbitrary commands. A task is a fixed enum of known work
-(`TaskPayload`), and every connection must present the master's pairing token.
+(`TaskPayload`). A machine joins only after someone approves it in the
+dashboard; from then on it proves its own Ed25519 key on every connection, and
+removing it refuses that key for good. The dashboard API needs the master's
+admin token. Details and threat model: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Try it on one machine
 
 ```sh
 cargo build
-export NODELOOM_TOKEN=dev-token
 
-./target/debug/nodeloom-master --bind 127.0.0.1:7878 --no-mdns &
+NODELOOM_TOKEN=dev-token ./target/debug/nodeloom-master --bind 127.0.0.1:7878 --no-mdns &
 ./target/debug/nodeloom-agent --master 127.0.0.1:7878 --enable-fake-runner &
 
 cd apps/desktop && pnpm install && pnpm dev   # open http://localhost:5173
 ```
 
-Connect to `127.0.0.1:7878` with token `dev-token`. On a real cluster, run the
-master on one machine and an agent on each machine; agents find the master via
-mDNS when `--master` is omitted. Traffic is plain HTTP/WebSocket for now, so
-use it only on a network you trust.
+Connect to `127.0.0.1:7878` with admin token `dev-token`. The agent shows up
+under "Waiting for approval" with the same code it printed; approve it. Without
+`NODELOOM_TOKEN`, the master creates an admin token on first start, prints it
+once and keeps it in its data directory.
+
+On a real cluster, run the master on one machine and an agent on each machine;
+agents find the master via mDNS when `--master` is omitted. To skip approval
+for scripted setups, start an agent with `--master` and `--token <admin token>`.
+Traffic is plain HTTP/WebSocket for now, so use it only on a network you trust.
 
 ## Development
 

@@ -43,12 +43,13 @@ pub fn hostname() -> String {
 }
 
 /// Describes this machine. `id` is supplied by the caller so it stays stable
-/// across restarts (the agent persists it).
+/// across restarts (the agent persists it). Fitted to what masters accept,
+/// so an unusual hostname cannot keep the machine from pairing.
 pub fn describe_node(id: NodeId, runners: Vec<RunnerKind>) -> NodeInfo {
     let mut sys = System::new();
     sys.refresh_memory();
     sys.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
-    NodeInfo {
+    crate::validate::fit_node_info(NodeInfo {
         id,
         hostname: hostname(),
         os: System::long_os_version().unwrap_or_else(|| std::env::consts::OS.into()),
@@ -56,7 +57,7 @@ pub fn describe_node(id: NodeId, runners: Vec<RunnerKind>) -> NodeInfo {
         cpu_cores: sys.cpus().len().max(1),
         total_memory_bytes: sys.total_memory(),
         runners,
-    }
+    })
 }
 
 #[cfg(test)]
