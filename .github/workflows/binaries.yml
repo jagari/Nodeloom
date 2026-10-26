@@ -1,21 +1,54 @@
 name: binaries
 
-# Release builds of the agent and master for every supported machine, kept
-# as downloadable artifacts for testing on real devices (Raspberry Pi,
-# Jetson, Windows on ARM). Runs on main and on demand; a pull request runs it
-# only when this file changes, to keep CI minutes down.
+# Release builds of the agent and master (with the dashboard bundled) for
+# every supported machine, packaged with the install scripts.
+# - main / manual run: packages kept as artifacts for 30 days.
+# - a `v*` tag: the same packages plus SHA256SUMS published as a GitHub
+#   release (a pre-release when the tag has a suffix such as -beta.1), then
+#   installed back from that release to prove the download path works.
+# - a pull request runs it only when packaging changes, to keep CI minutes down.
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
   pull_request:
-    paths: ['.github/workflows/binaries.yml']
+    paths:
+      - '.github/workflows/binaries.yml'
+      - 'scripts/install.*'
+      - 'scripts/package-readme.txt'
+      - 'crates/nodeloom-master/src/ui.rs'
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dashboard
+          path: apps/desktop/dist
+          retention-days: 1
+          if-no-files-found: error
+
   build:
+    needs: dashboard
     strategy:
       fail-fast: false
       matrix:
@@ -31,6 +64,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dashboard
+          path: apps/desktop/dist
       - name: Install rustup if the image has none
         if: runner.os == 'Windows'
         shell: pwsh
@@ -47,29 +84,129 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - run: cargo build --release --locked --target ${{ matrix.target }} -p nodeloom-agent -p nodeloom-master
-      - name: Collect and smoke-test
+      - name: Version
+        id: version
         shell: bash
         run: |
           set -euo pipefail
+          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF#refs/tags/v}"
+            # The binaries print the crate version; a tag that disagrees
+            # would ship packages whose --version lies.
+            [[ "$tag" == "$crate" ]] || { echo "tag v$tag != Cargo.toml $crate"; exit 1; }
+            echo "label=$crate" >> "$GITHUB_OUTPUT"
+          else
+            echo "label=$crate-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p nodeloom-agent -p nodeloom-master --features nodeloom-master/embed-ui
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg="nodeloom-${{ steps.version.outputs.label }}-${{ matrix.name }}"
           src="target/${{ matrix.target }}/release"
-          out="dist/nodeloom-${{ matrix.name }}"
-          mkdir -p "$out"
-          ext=""
-          if [[ "${{ runner.os }}" == "Windows" ]]; then ext=".exe"; fi
-          for bin in nodeloom-agent nodeloom-master; do
-            cp "$src/$bin$ext" "$out/"
-            # Built on the same architecture it targets, so it can run here.
-            "$out/$bin$ext" --version
-          done
+          mkdir -p "dist/$pkg"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cp "$src/nodeloom-agent.exe" "$src/nodeloom-master.exe" scripts/install.ps1 "dist/$pkg/"
+          else
+            cp "$src/nodeloom-agent" "$src/nodeloom-master" scripts/install.sh "dist/$pkg/"
+            chmod 755 "dist/$pkg/install.sh"
+          fi
           if [[ "${{ matrix.target }}" == *-musl ]]; then
             # Must not depend on the system's C library.
-            file "$out/nodeloom-agent" | tee /dev/stderr | grep -q "static"
+            file "dist/$pkg/nodeloom-agent" | tee /dev/stderr | grep -q "static"
           fi
-          cp LICENSE NOTICE "$out/"
+          cp LICENSE NOTICE "dist/$pkg/"
+          cp scripts/package-readme.txt "dist/$pkg/README.txt"
+          echo "PKG=$pkg" >> "$GITHUB_ENV"
+      - name: Archive (zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "dist/$env:PKG" -DestinationPath "dist/$env:PKG.zip"
+      - name: Archive (tar.gz)
+        if: runner.os != 'Windows'
+        run: tar -C dist -czf "dist/$PKG.tar.gz" "$PKG"
+      # Built on the architecture it targets, so the package can be installed
+      # and started right here, the way a user would.
+      - name: Install and start (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/unpack"
+          tar -xzf "dist/$PKG.tar.gz" -C "$RUNNER_TEMP/unpack"
+          NODELOOM_INSTALL_DIR="$RUNNER_TEMP/bin" "$RUNNER_TEMP/unpack/$PKG/install.sh"
+          "$RUNNER_TEMP/bin/nodeloom-master" --bind 127.0.0.1:7878 --no-mdns --data-dir "$RUNNER_TEMP/data" &
+          master=$!
+          for _ in $(seq 1 50); do curl -sf http://127.0.0.1:7878/ -o page.html && break; sleep 0.2; done
+          kill "$master"
+          # The bundled dashboard, not the "built without" page.
+          grep -q '/assets/' page.html
+      - name: Install and start (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Expand-Archive "dist/$env:PKG.zip" -DestinationPath "$env:RUNNER_TEMP/unpack"
+          & "$env:RUNNER_TEMP/unpack/$env:PKG/install.ps1" -InstallDir "$env:RUNNER_TEMP/bin"
+          if ($LASTEXITCODE) { exit 1 }
+          $master = Start-Process "$env:RUNNER_TEMP/bin/nodeloom-master.exe" -ArgumentList '--bind', '127.0.0.1:7878', '--no-mdns', '--data-dir', "$env:RUNNER_TEMP/data" -PassThru
+          $page = $null
+          foreach ($i in 1..50) {
+            try { $page = (Invoke-WebRequest http://127.0.0.1:7878/ -UseBasicParsing).Content; break } catch { Start-Sleep -Milliseconds 200 }
+          }
+          Stop-Process $master
+          if (-not ($page -match '/assets/')) { Write-Error 'dashboard not served'; exit 1 }
       - uses: actions/upload-artifact@v4
         with:
-          name: nodeloom-${{ matrix.name }}
-          path: dist/nodeloom-${{ matrix.name }}
+          name: ${{ env.PKG }}
+          path: dist/${{ env.PKG }}.*
           retention-days: 30
           if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nodeloom-*
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum nodeloom-* > SHA256SUMS
+          cat SHA256SUMS
+          # Notes = this version's section of CHANGELOG.md.
+          awk -v v="${TAG#v}" '/^## /{p = index($0, "[" v "]") > 0; next} p' ../CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "CHANGELOG.md has no section for ${TAG#v}"; exit 1; }
+          flags=()
+          if [[ "$TAG" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$TAG" --title "Nodeloom $TAG" --notes-file notes.md "${flags[@]}" \
+            nodeloom-* SHA256SUMS
+
+  # Installs from the published release the way a teammate would, through
+  # the GitHub CLI, so a broken download path is caught at release time.
+  verify-release:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install from the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NODELOOM_REPO: ${{ github.repository }}
+          NODELOOM_VERSION: ${{ github.ref_name }}
+          NODELOOM_INSTALL_DIR: ${{ runner.temp }}/bin
+        run: |
+          set -euo pipefail
+          sh scripts/install.sh
+          "$NODELOOM_INSTALL_DIR/nodeloom-agent" --version | grep -F "${NODELOOM_VERSION#v}"

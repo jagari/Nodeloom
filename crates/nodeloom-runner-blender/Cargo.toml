@@ -12,8 +12,8 @@ workspace = true
 
 [dependencies]
 async-trait = "0.1.92"
-nodeloom-core = { version = "0.1.0", path = "../nodeloom-core" }
-nodeloom-proto = { version = "0.1.0", path = "../nodeloom-proto" }
+nodeloom-core = { path = "../nodeloom-core" }
+nodeloom-proto = { path = "../nodeloom-proto" }
 thiserror = "2.0.21"
 tokio = { version = "1.53.2", features = ["rt", "macros", "sync", "time", "process", "fs", "io-util"] }
 tracing = "0.1.44"

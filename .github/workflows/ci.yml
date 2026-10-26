@@ -57,6 +57,16 @@ jobs:
       - run: pnpm check
       - run: pnpm test
       - run: pnpm build
+      # The master bundles this build in releases (`embed-ui`); keep that
+      # configuration compiling and serving on every change.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p nodeloom-master --all-targets --features embed-ui -- -D warnings
+        working-directory: .
+      - run: cargo test -p nodeloom-master --features embed-ui --test e2e dashboard
+        working-directory: .
 
   desktop-shell:
     needs: ui
