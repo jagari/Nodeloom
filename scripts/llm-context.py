@@ -29,7 +29,8 @@ AREAS = {
               "crates/nodeloom-runner-blender/src/lib.rs"],
     "ui": ["docs/ARCHITECTURE.md", "apps/desktop/src/lib/types.ts", "apps/desktop/src/lib/client.ts",
            "apps/desktop/src/lib/devices.ts", "apps/desktop/src/App.svelte", "apps/desktop/src/app.css"],
-    "platform": ["docs/ARCHITECTURE.md", ".github/workflows/ci.yml", "apps/desktop/src-tauri/tauri.conf.json",
+    "platform": ["docs/ARCHITECTURE.md", "docs/BETA.md", ".github/workflows/ci.yml",
+                 ".github/workflows/binaries.yml", "scripts/install.sh", "apps/desktop/src-tauri/tauri.conf.json",
                  "apps/desktop/package.json"],
     "biz": ["docs/DECISIONS.md", "README.md"],
 }
