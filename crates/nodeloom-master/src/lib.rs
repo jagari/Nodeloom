@@ -4,6 +4,7 @@
 pub mod devices;
 pub mod server;
 pub mod state;
+pub mod ui;
 
 use std::{io, path::Path};
 

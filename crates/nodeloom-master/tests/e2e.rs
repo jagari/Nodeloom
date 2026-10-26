@@ -780,3 +780,60 @@ async fn cors_preflight_allows_authorized_ui_requests() {
         assert!(methods.contains(method), "{methods}");
     }
 }
+
+#[tokio::test]
+async fn dashboard_page_is_served_with_protective_headers() {
+    let h = start_master().await;
+    let page = reqwest::get(format!("{}/", h.base)).await.unwrap();
+    assert_eq!(page.status().as_u16(), 200);
+    let headers = page.headers().clone();
+    assert!(
+        headers["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("text/html")
+    );
+    assert_eq!(headers["x-content-type-options"], "nosniff");
+    let csp = headers["content-security-policy"].to_str().unwrap();
+    assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+    // The page itself needs no token; everything it shows comes from the API.
+    assert!(page.text().await.unwrap().contains("Nodeloom"));
+
+    // Unknown API paths stay errors instead of falling through to the page.
+    for path in ["/api/nope", "/ws/nope"] {
+        let status = reqwest::get(format!("{}{path}", h.base))
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(status.as_u16(), 404, "{path}");
+    }
+}
+
+#[cfg(feature = "embed-ui")]
+#[tokio::test]
+async fn bundled_dashboard_assets_are_served() {
+    let h = start_master().await;
+    let html = reqwest::get(format!("{}/", h.base))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    // Every script and stylesheet the page names must come back from the
+    // master, cacheable for good (Vite hashes their names).
+    let assets: Vec<&str> = html
+        .split('"')
+        .filter(|s| s.starts_with("/assets/"))
+        .collect();
+    assert!(!assets.is_empty(), "{html}");
+    for asset in assets {
+        let response = reqwest::get(format!("{}{asset}", h.base)).await.unwrap();
+        assert_eq!(response.status().as_u16(), 200, "{asset}");
+        assert!(
+            response.headers()["cache-control"]
+                .to_str()
+                .unwrap()
+                .contains("immutable")
+        );
+    }
+}
