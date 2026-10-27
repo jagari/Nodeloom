@@ -1,7 +1,8 @@
 name: binaries
 
 # Release builds of the agent and master (with the dashboard bundled) for
-# every supported machine, packaged with the install scripts.
+# every supported machine, packaged with the install scripts, and the
+# desktop app's installers.
 # - main / manual run: packages kept as artifacts for 30 days.
 # - a `v*` tag: the same packages plus SHA256SUMS published as a GitHub
 #   release (a pre-release when the tag has a suffix such as -beta.1), then
@@ -27,6 +28,7 @@ on:
       - 'scripts/install.*'
       - 'scripts/package-readme.txt'
       - 'crates/nodeloom-master/src/ui.rs'
+      - 'apps/desktop/src-tauri/**'
 
 env:
   CARGO_TERM_COLOR: always
@@ -178,9 +180,122 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+  # The desktop app: a master or an agent in a window and the tray (D16).
+  # Linux packages are built on the oldest supported Ubuntu, because a
+  # package only installs where the C library is at least as new.
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macos-arm64, runner: macos-latest, target: aarch64-apple-darwin, bundle: dmg, ext: dmg }
+          - { name: windows-x64, runner: windows-latest, target: x86_64-pc-windows-msvc, bundle: nsis, ext: exe }
+          - { name: windows-arm64, runner: windows-11-arm, target: aarch64-pc-windows-msvc, bundle: nsis, ext: exe }
+          - { name: linux-x64, runner: ubuntu-22.04, target: x86_64-unknown-linux-gnu, bundle: deb, ext: deb }
+          - { name: linux-arm64, runner: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, bundle: deb, ext: deb }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev xvfb
+      - name: Install rustup if the image has none
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+            $arch = if ($env:RUNNER_ARCH -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
+            Invoke-WebRequest "https://static.rust-lang.org/rustup/dist/$arch-pc-windows-msvc/rustup-init.exe" -OutFile rustup-init.exe
+            .\rustup-init.exe -y --default-toolchain none --profile minimal
+            Add-Content $env:GITHUB_PATH "$env:USERPROFILE\.cargo\bin"
+          }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+          key: ${{ matrix.target }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: apps/desktop
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          # The app reports its own version; it must match the release.
+          app=$(sed -n 's/^version = "\(.*\)"/\1/p' apps/desktop/src-tauri/Cargo.toml | head -n 1)
+          conf=$(sed -n 's/^  "version": "\(.*\)",/\1/p' apps/desktop/src-tauri/tauri.conf.json)
+          [[ "$app" == "$crate" && "$conf" == "$crate" ]] ||
+            { echo "desktop app version ($app, tauri.conf.json $conf) != Cargo.toml $crate"; exit 1; }
+          if [[ "$GITHUB_REF" == refs/tags/v* || "$RELEASING" == "true" ]]; then
+            echo "label=$crate" >> "$GITHUB_OUTPUT"
+          else
+            echo "label=$crate-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build the installer
+        shell: bash
+        working-directory: apps/desktop
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}
+      - name: Collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=$(find "apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle }}" \
+            -maxdepth 1 -name "*.${{ matrix.ext }}" | head -n 1)
+          [ -n "$found" ] || { echo "no .${{ matrix.ext }} was built"; exit 1; }
+          mkdir -p dist
+          out="dist/nodeloom-desktop-${{ steps.version.outputs.label }}-${{ matrix.name }}.${{ matrix.ext }}"
+          cp "$found" "$out"
+          ls -l dist
+          echo "OUT=$out" >> "$GITHUB_ENV"
+      # Installs the package the way a user would (its dependencies must
+      # resolve) and starts it as a master on a virtual display: the
+      # machine must join its own cluster.
+      - name: Install and start (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y "./$OUT"
+          home="$RUNNER_TEMP/app"
+          mkdir -p "$home/config/io.github.jagari.nodeloom"
+          echo '{"role":"master"}' > "$home/config/io.github.jagari.nodeloom/settings.json"
+          XDG_CONFIG_HOME="$home/config" XDG_DATA_HOME="$home/data" \
+            xvfb-run -a nodeloom-desktop > "$home/app.log" 2>&1 &
+          app=$!
+          nodes=0
+          for _ in $(seq 1 60); do
+            if [ -f "$home/data/nodeloom/master/admin-token" ]; then
+              nodes=$(curl -sf -H "Authorization: Bearer $(cat "$home/data/nodeloom/master/admin-token")" \
+                http://127.0.0.1:7878/api/state | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["nodes"]))' || echo 0)
+              [ "$nodes" = 1 ] && break
+            fi
+            sleep 1
+          done
+          kill "$app" || true
+          cat "$home/app.log"
+          [ "$nodes" = 1 ] || { echo "the app's machine did not join its own cluster"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nodeloom-desktop-${{ steps.version.outputs.label }}-${{ matrix.name }}
+          path: ${{ env.OUT }}
+          retention-days: 30
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release)
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write

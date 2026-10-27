@@ -2481,7 +2481,7 @@ dependencies = [
 
 [[package]]
 name = "nodeloom-agent"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2502,7 +2502,7 @@ dependencies = [
 
 [[package]]
 name = "nodeloom-core"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "async-trait",
  "ed25519-dalek",
@@ -2521,7 +2521,7 @@ dependencies = [
 
 [[package]]
 name = "nodeloom-desktop"
-version = "0.1.0"
+version = "0.1.0-beta.2"
 dependencies = [
  "anyhow",
  "dirs 7.0.0",
@@ -2544,7 +2544,7 @@ dependencies = [
 
 [[package]]
 name = "nodeloom-master"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -2566,7 +2566,7 @@ dependencies = [
 
 [[package]]
 name = "nodeloom-proto"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -2574,7 +2574,7 @@ dependencies = [
 
 [[package]]
 name = "nodeloom-runner-blender"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "async-trait",
  "nodeloom-core",
