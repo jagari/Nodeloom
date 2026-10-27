@@ -71,7 +71,8 @@ CI는 **항상 최신 stable Rust**를 쓴다. 로컬 Rust가 오래되면 로�
 cargo build
 NODELOOM_TOKEN=dev-token ./target/debug/nodeloom-master --bind 127.0.0.1:7878 --no-mdns &
 ./target/debug/nodeloom-agent --master 127.0.0.1:7878 --enable-fake-runner &
-# UI에서 127.0.0.1:7878 / dev-token 으로 접속 → "Waiting for approval"에서 에이전트 로그의 코드와 같은지 보고 승인
+# UI(pnpm dev)에서 127.0.0.1:7878 / dev-token 으로 접속 → "Waiting for approval"에서 에이전트 로그의 코드와 같은지 보고 승인
+# 마스터가 대시보드를 직접 제공하게 하려면: (apps/desktop에서 pnpm build 후) cargo build --features nodeloom-master/embed-ui
 # 승인 없이 붙이려면 에이전트에 --token dev-token (--master가 있을 때만)
 ```
 

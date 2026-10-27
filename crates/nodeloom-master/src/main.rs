@@ -1,9 +1,13 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    net::{IpAddr, SocketAddr, UdpSocket},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use nodeloom_core::{discovery, metrics::hostname};
-use nodeloom_master::{Cluster, DeviceStore, load_admin_token, serve};
+use nodeloom_master::{Cluster, DeviceStore, load_admin_token, serve, ui};
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 
@@ -58,6 +62,7 @@ async fn main() -> Result<()> {
         .with_context(|| format!("binding {}", args.bind))?;
     let addr = listener.local_addr()?;
 
+    let dashboard = dashboard_url(addr);
     let token = match args.token {
         // clap passes an empty NODELOOM_TOKEN through; a blank admin token
         // would let anyone in.
@@ -73,6 +78,11 @@ async fn main() -> Result<()> {
             // service logs do not keep a copy of a long-lived secret.
             if created {
                 info!("admin token: {token} (saved to {})", path.display());
+                if ui::EMBEDDED {
+                    // The token rides in the fragment, which browsers never
+                    // send to the server; the page reads it and drops it.
+                    info!("open the dashboard: {dashboard}#token={token}");
+                }
             } else {
                 info!("admin token: see {}", path.display());
             }
@@ -84,6 +94,9 @@ async fn main() -> Result<()> {
         "listening on {addr}; paired machines in {}",
         data_dir.display()
     );
+    if ui::EMBEDDED {
+        info!("dashboard: {dashboard}");
+    }
 
     let _advertisement = if args.no_mdns {
         None
@@ -106,4 +119,19 @@ async fn main() -> Result<()> {
         _ = tokio::signal::ctrl_c() => info!("shutting down"),
     }
     Ok(())
+}
+
+/// The address other machines can reach the dashboard at. A wildcard bind
+/// (the default) says nothing useful, so ask the OS which local address it
+/// would use to leave the machine; connecting a UDP socket sends nothing.
+fn dashboard_url(addr: SocketAddr) -> String {
+    let ip = if addr.ip().is_unspecified() {
+        UdpSocket::bind("0.0.0.0:0")
+            .and_then(|s| s.connect("192.0.2.1:9").and_then(|()| s.local_addr()))
+            .map(|a| a.ip())
+            .unwrap_or(IpAddr::from([127, 0, 0, 1]))
+    } else {
+        addr.ip()
+    };
+    format!("http://{}/", SocketAddr::new(ip, addr.port()))
 }

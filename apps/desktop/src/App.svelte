@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { ClusterClient, parseEndpoint, type ConnectionStatus } from './lib/client';
   import { lookalikes, pairedRows } from './lib/devices';
   import { updateHistory, type History } from './lib/history';
+  import { initialConnection } from './lib/launch';
   import { displayNames } from './lib/names';
   import type { ClusterSnapshot, NodeId, TaskPayload } from './lib/types';
   import ConnectForm from './components/ConnectForm.svelte';
@@ -33,8 +35,18 @@
     }
   }
 
-  let host = $state(load(HOST_KEY));
-  let token = $state(load(TOKEN_KEY));
+  const launch = initialConnection(
+    window.location,
+    { host: load(HOST_KEY), token: load(TOKEN_KEY) },
+    import.meta.env.DEV,
+  );
+  if (launch.clearHash) {
+    // Keep the token out of the address bar, history and screenshots.
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }
+
+  let host = $state(launch.host);
+  let token = $state(launch.token);
   let status = $state<ConnectionStatus>('connecting');
   let snapshot = $state<ClusterSnapshot>(EMPTY);
   let history = $state<History>({});
@@ -69,8 +81,11 @@
     save(TOKEN_KEY, '');
   }
 
-  $effect(() => {
-    if (host && token && !client) start(host, token);
+  // Reconnect at start from a remembered connection or the master's link.
+  // Not an $effect: one that reads `client` re-runs after start() sets it,
+  // and its cleanup would stop the client it just made.
+  onMount(() => {
+    if (host && token) start(host, token);
     return () => client?.stop();
   });
 

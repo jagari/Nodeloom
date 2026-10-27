@@ -10,8 +10,8 @@
    - 데스크톱 셸을 빌드할 사람만: Tauri 사전 요구사항 (https://tauri.app/start/prerequisites/)
 2. 저장소를 받고 테스트가 통과하는지 확인한다.
    ```sh
-   git clone https://github.com/jagari/My-repository.git
-   cd My-repository
+   git clone https://github.com/jagari/Nodeloom.git
+   cd Nodeloom
    cargo test --workspace
    cd apps/desktop && pnpm install && pnpm test
    ```

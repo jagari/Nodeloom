@@ -73,12 +73,18 @@ agents find the master via mDNS when `--master` is omitted. To skip approval
 for scripted setups, start an agent with `--master` and `--token <admin token>`.
 Traffic is plain HTTP/WebSocket for now, so use it only on a network you trust.
 
-## Prebuilt binaries
+## Install the beta
 
-Every push to `main` builds the agent and master for Linux x64/arm64
-(static, so they also run on Raspberry Pi OS and Jetson), Windows x64/arm64
-and macOS arm64. Download them from the latest run of the `binaries`
-workflow in the Actions tab (kept for 30 days).
+Team beta `v0.1.0-beta.1` is on the Releases page: packages for Linux
+x64/arm64 (static, so they also run on Raspberry Pi OS and Jetson), Windows
+x64/arm64 and macOS arm64, each with an install script. Run
+`nodeloom-master` on one machine, open the dashboard link it prints, and run
+`nodeloom-agent` on the others. The full guide (Korean) is
+[docs/BETA.md](docs/BETA.md); changes are in [CHANGELOG.md](CHANGELOG.md).
+
+Every push to `main` also builds these packages as artifacts of the
+`binaries` workflow (kept for 30 days); a `v*` tag publishes them as a
+release.
 
 ## Development
 

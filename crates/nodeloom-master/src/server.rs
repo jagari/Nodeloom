@@ -7,6 +7,7 @@
 //! * `DELETE /api/devices/{node_id}`            remove a paired machine for good
 //! * `GET    /ws/ui`                           snapshot stream for UI clients
 //! * `GET    /ws/agent`                        agent connections
+//! * `GET    /` and other paths                the dashboard (see [`crate::ui`])
 //!
 //! UI endpoints need the admin token as `Authorization: Bearer <token>`.
 //! `/ws/ui` also takes `?token=<token>` because browsers' WebSocket API
@@ -66,6 +67,8 @@ pub fn router(cluster: Arc<Cluster>) -> Router {
         .route("/api/devices/{node_id}", delete(remove_device))
         .route("/ws/ui", get(ws_ui))
         .route("/ws/agent", get(ws_agent))
+        // Everything else is the dashboard (see `ui`).
+        .fallback(crate::ui::serve)
         .layer(DefaultBodyLimit::max(64 * 1024))
         // UIs run on other origins (Tauri webview, dev server). Auth is a
         // bearer token rather than cookies, so any origin may call the API.
