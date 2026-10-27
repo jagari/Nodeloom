@@ -97,6 +97,15 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
     result.map_err(|e| e.to_string())
 }
 
+/// Gives this machine a new identity, for one the dashboard removed: the
+/// old key stays refused, the new one shows up for approval with a new code.
+#[tauri::command]
+fn reset_identity(app: AppHandle) -> Result<(), String> {
+    let dirs = services::Dirs::standard().map_err(|e| e.to_string())?;
+    nodeloom_agent::identity::reset(&dirs.agent_state).map_err(|e| e.to_string())?;
+    app.restart()
+}
+
 /// Opens the dashboard window (master machines only).
 #[tauri::command]
 fn open_dashboard(app: AppHandle) {
@@ -211,6 +220,7 @@ pub fn run() {
             app_state,
             choose_role,
             set_autostart,
+            reset_identity,
             open_dashboard
         ])
         .setup(|app| {

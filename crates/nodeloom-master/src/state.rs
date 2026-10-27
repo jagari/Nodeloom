@@ -22,7 +22,8 @@ use crate::devices::{ApprovedDevice, DeviceStore, Devices, StoreError};
 /// Jobs kept in memory; the oldest are dropped first.
 const MAX_JOBS: usize = 100;
 
-/// Reason sent to a machine whose key was removed from the cluster.
+/// Reason sent to a machine whose key was removed from the cluster. The
+/// desktop app recognizes "was removed from the cluster" to offer pairing again.
 pub const REMOVED: &str = "this machine was removed from the cluster; run \
                            `nodeloom-agent reset-identity` on it and approve it again";
 const IGNORED: &str = "the cluster owner ignored this machine; it can ask again after \
