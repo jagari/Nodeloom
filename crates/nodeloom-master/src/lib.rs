@@ -6,7 +6,11 @@ pub mod server;
 pub mod state;
 pub mod ui;
 
-use std::{io, path::Path};
+use std::{
+    io,
+    net::{IpAddr, SocketAddr, UdpSocket},
+    path::Path,
+};
 
 use nodeloom_core::{identity::random_hex, private_file};
 
@@ -46,6 +50,21 @@ pub fn load_admin_token(dir: &Path, rotate: bool) -> io::Result<(String, bool)> 
         return Err(e);
     }
     Ok((token, true))
+}
+
+/// The address other machines can reach the dashboard at. A wildcard bind
+/// (the default) says nothing useful, so ask the OS which local address it
+/// would use to leave the machine; connecting a UDP socket sends nothing.
+pub fn dashboard_url(addr: SocketAddr) -> String {
+    let ip = if addr.ip().is_unspecified() {
+        UdpSocket::bind("0.0.0.0:0")
+            .and_then(|s| s.connect("192.0.2.1:9").and_then(|()| s.local_addr()))
+            .map(|a| a.ip())
+            .unwrap_or(IpAddr::from([127, 0, 0, 1]))
+    } else {
+        addr.ip()
+    };
+    format!("http://{}/", SocketAddr::new(ip, addr.port()))
 }
 
 #[cfg(test)]

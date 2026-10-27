@@ -1,13 +1,9 @@
-use std::{
-    net::{IpAddr, SocketAddr, UdpSocket},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use nodeloom_core::{discovery, metrics::hostname};
-use nodeloom_master::{Cluster, DeviceStore, load_admin_token, serve, ui};
+use nodeloom_master::{Cluster, DeviceStore, dashboard_url, load_admin_token, serve, ui};
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 
@@ -119,19 +115,4 @@ async fn main() -> Result<()> {
         _ = tokio::signal::ctrl_c() => info!("shutting down"),
     }
     Ok(())
-}
-
-/// The address other machines can reach the dashboard at. A wildcard bind
-/// (the default) says nothing useful, so ask the OS which local address it
-/// would use to leave the machine; connecting a UDP socket sends nothing.
-fn dashboard_url(addr: SocketAddr) -> String {
-    let ip = if addr.ip().is_unspecified() {
-        UdpSocket::bind("0.0.0.0:0")
-            .and_then(|s| s.connect("192.0.2.1:9").and_then(|()| s.local_addr()))
-            .map(|a| a.ip())
-            .unwrap_or(IpAddr::from([127, 0, 0, 1]))
-    } else {
-        addr.ip()
-    };
-    format!("http://{}/", SocketAddr::new(ip, addr.port()))
 }

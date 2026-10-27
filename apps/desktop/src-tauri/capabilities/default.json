@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions of the main window",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "description": "The app's own page (setup, status, settings). The dashboard is a remote page and gets none of this.",
+  "windows": [
+    "main",
+    "settings"
+  ],
+  "permissions": [
+    "core:default"
+  ]
 }

@@ -10,9 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      { "label": "main", "title": "Nodeloom", "width": 1100, "height": 800, "minWidth": 420, "minHeight": 480 }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http: https: ws: wss:"
     }
@@ -20,6 +18,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
   }
 }
