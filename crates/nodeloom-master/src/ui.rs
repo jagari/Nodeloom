@@ -15,9 +15,11 @@ use axum::{
 
 /// No other site may frame the dashboard (its Approve button must not be
 /// clickjacked). Scripts and styles come only from the master. `connect-src`
-/// stays open because the same page can connect to another master.
+/// stays open because the same page can connect to another master. WebKit
+/// (Safari, and the desktop app on macOS and Linux) does not count `ws:` as
+/// part of `*`, so the live updates socket needs naming.
 const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
-                   img-src 'self' data:; connect-src *; frame-ancestors 'none'; \
+                   img-src 'self' data:; connect-src * ws: wss:; frame-ancestors 'none'; \
                    base-uri 'none'; form-action 'none'";
 
 fn with_headers(mut response: Response, content_type: &str, immutable: bool) -> Response {

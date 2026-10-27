@@ -856,6 +856,8 @@ async fn dashboard_page_is_served_with_protective_headers() {
     assert_eq!(headers["x-content-type-options"], "nosniff");
     let csp = headers["content-security-policy"].to_str().unwrap();
     assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+    // WebKit does not read `*` as including the live-updates socket.
+    assert!(csp.contains("ws:"), "{csp}");
     // The page itself needs no token; everything it shows comes from the API.
     assert!(page.text().await.unwrap().contains("Nodeloom"));
 
