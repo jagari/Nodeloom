@@ -5,14 +5,14 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use futures_util::{SinkExt, StreamExt};
-use nodeloom_agent::{AgentConfig, Identity, run_forever};
+use nodeloom_agent::{AgentConfig, AgentStatus, Identity, run_forever};
 use nodeloom_core::{FakeRunner, RunnerSet, identity::DeviceKey};
 use nodeloom_master::{Cluster, DeviceStore, Settings, serve};
 use nodeloom_proto::{
     AgentMessage, ClusterSnapshot, JobView, MasterMessage, Metrics, NodeId, NodeInfo,
     PROTOCOL_VERSION, RunnerKind, SubmitJob, TaskId, TaskPayload, TaskState,
 };
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::{net::TcpListener, sync::watch, task::JoinHandle};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
     tungstenite::{Message, client::IntoClientRequest},
@@ -103,12 +103,22 @@ fn rejected_because(reply: Option<MasterMessage>, needle: &str) -> bool {
 impl Harness {
     /// Runs a real agent; returns its index in `tasks` so a test can kill it.
     fn spawn_agent(&mut self, me: Identity, token: Option<&str>) -> usize {
+        self.spawn_agent_reporting(me, token, None)
+    }
+
+    fn spawn_agent_reporting(
+        &mut self,
+        me: Identity,
+        token: Option<&str>,
+        status: Option<watch::Sender<AgentStatus>>,
+    ) -> usize {
         let config = AgentConfig {
             master_url: format!("{}/ws/agent", self.ws_base),
             identity: me,
             token: token.map(str::to_owned),
             runners: RunnerSet::new().with(Arc::new(FakeRunner)),
             metrics_interval: Duration::from_millis(50),
+            status,
         };
         self.tasks.push(tokio::spawn(async move {
             run_forever(config).await;
@@ -353,6 +363,56 @@ async fn approved_machine_reconnects_without_asking_again() {
     h.spawn_agent(me, None);
     let snap = h.wait_for("agent back", |s| s.nodes.len() == 1).await;
     assert!(snap.pending.is_empty(), "no second approval needed");
+}
+
+#[tokio::test]
+async fn agent_status_follows_pairing_and_removal() {
+    let mut h = start_master().await;
+    let me = identity("desk");
+    let master = format!("{}/ws/agent", h.ws_base);
+    let (tx, mut rx) = watch::channel(AgentStatus::Searching);
+    h.spawn_agent_reporting(me.clone(), None, Some(tx));
+
+    let expected = AgentStatus::WaitingForApproval {
+        master: master.clone(),
+        code: me.confirmation_code(),
+    };
+    wait_status(&mut rx, "waiting with the code", |s| *s == expected).await;
+    let snap = h
+        .wait_for("request appears", |s| s.pending.len() == 1)
+        .await;
+    assert_eq!(h.approve(&snap.pending[0].public_key).await, 204);
+    wait_status(&mut rx, "joined", |s| {
+        *s == AgentStatus::Joined {
+            master: master.clone(),
+        }
+    })
+    .await;
+
+    assert_eq!(
+        h.call(reqwest::Method::DELETE, "/api/devices/desk").await,
+        204
+    );
+    // The reason stays visible while the agent waits to retry.
+    wait_status(&mut rx, "told it was removed", |s| {
+        matches!(s, AgentStatus::Connecting { last_error: Some(e), .. } if e.contains("removed"))
+    })
+    .await;
+}
+
+async fn wait_status(
+    rx: &mut watch::Receiver<AgentStatus>,
+    what: &str,
+    cond: impl FnMut(&AgentStatus) -> bool,
+) {
+    let reached = tokio::time::timeout(Duration::from_secs(10), rx.wait_for(cond))
+        .await
+        .is_ok_and(|r| r.is_ok());
+    assert!(
+        reached,
+        "timed out waiting for agent status: {what}; last {:?}",
+        *rx.borrow()
+    );
 }
 
 #[tokio::test]

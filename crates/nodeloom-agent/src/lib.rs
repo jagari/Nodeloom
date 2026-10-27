@@ -13,7 +13,11 @@ use nodeloom_core::{
     validate::validate_payload,
 };
 use nodeloom_proto::{AgentMessage, MasterMessage, PROTOCOL_VERSION, TaskId, TaskSpec};
-use tokio::{sync::mpsc, task::JoinHandle};
+use serde::Serialize;
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{info, warn};
 
@@ -31,6 +35,36 @@ pub struct AgentConfig {
     pub token: Option<String>,
     pub runners: RunnerSet,
     pub metrics_interval: Duration,
+    /// Where to report what the agent is doing, for a screen to show (the
+    /// desktop app). The log says the same for the command-line agent.
+    pub status: Option<watch::Sender<AgentStatus>>,
+}
+
+/// What the agent is doing right now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum AgentStatus {
+    /// Looking for a master on the local network. The agent loop never
+    /// reports this; callers that run discovery before it do.
+    Searching,
+    /// Connecting to `master`, or waiting to retry after `last_error`.
+    Connecting {
+        master: String,
+        last_error: Option<String>,
+    },
+    /// Connected, but the master waits for someone to approve this machine
+    /// in the dashboard after comparing `code`.
+    WaitingForApproval { master: String, code: String },
+    /// In the cluster and taking tasks.
+    Joined { master: String },
+}
+
+impl AgentConfig {
+    fn report(&self, status: AgentStatus) {
+        if let Some(tx) = &self.status {
+            tx.send_replace(status);
+        }
+    }
 }
 
 /// Events produced by running tasks and consumed by the connection loop.
@@ -91,6 +125,10 @@ async fn session(config: &AgentConfig, welcomed: &mut bool) -> Result<()> {
             Some(MasterMessage::Welcome) => break,
             Some(MasterMessage::Pending) => {
                 if !announced {
+                    config.report(AgentStatus::WaitingForApproval {
+                        master: config.master_url.clone(),
+                        code: identity.confirmation_code(),
+                    });
                     info!(
                         "waiting for approval on {}. Confirmation code: {}. Approve this \
                          machine in the Nodeloom dashboard only if it shows the same code.",
@@ -107,6 +145,9 @@ async fn session(config: &AgentConfig, welcomed: &mut bool) -> Result<()> {
     }
     info!("joined the cluster at {}", config.master_url);
     *welcomed = true;
+    config.report(AgentStatus::Joined {
+        master: config.master_url.clone(),
+    });
 
     let (event_tx, mut event_rx) = mpsc::channel::<TaskEvent>(256);
     let mut running: HashMap<TaskId, JoinHandle<()>> = HashMap::new();
@@ -172,12 +213,28 @@ async fn session(config: &AgentConfig, welcomed: &mut bool) -> Result<()> {
 /// followed by a quick reconnect.
 pub async fn run_forever(config: AgentConfig) -> ! {
     let mut delay = Duration::from_secs(1);
+    config.report(AgentStatus::Connecting {
+        master: config.master_url.clone(),
+        last_error: None,
+    });
     loop {
         let mut welcomed = false;
-        match session(&config, &mut welcomed).await {
-            Ok(()) => info!("master closed the connection"),
-            Err(e) => warn!("connection ended: {e:#}"),
-        }
+        let error = match session(&config, &mut welcomed).await {
+            Ok(()) => {
+                info!("master closed the connection");
+                "the master closed the connection".to_owned()
+            }
+            Err(e) => {
+                warn!("connection ended: {e:#}");
+                format!("{e:#}")
+            }
+        };
+        // Shown while waiting to retry, so a rejection (say, a removed
+        // machine) stays on screen instead of flashing past.
+        config.report(AgentStatus::Connecting {
+            master: config.master_url.clone(),
+            last_error: Some(error),
+        });
         if welcomed {
             delay = Duration::from_secs(1);
         }
