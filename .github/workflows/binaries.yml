@@ -6,12 +6,21 @@ name: binaries
 # - a `v*` tag: the same packages plus SHA256SUMS published as a GitHub
 #   release (a pre-release when the tag has a suffix such as -beta.1), then
 #   installed back from that release to prove the download path works.
+# - a manual run on main with "release" checked: the same release for the
+#   version in Cargo.toml, with the release creating its own `v<version>` tag.
+#   It is for teammates who cannot push tags from their machine; the button
+#   is under Actions → binaries → Run workflow.
 # - a pull request runs it only when packaging changes, to keep CI minutes down.
 on:
   push:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      release:
+        description: 'Publish v<Cargo.toml version> as a GitHub release (main only)'
+        type: boolean
+        default: false
   pull_request:
     paths:
       - '.github/workflows/binaries.yml'
@@ -21,6 +30,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # A tag push or a manual release run; either publishes a release.
+  RELEASING: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release) }}
 
 jobs:
   dashboard:
@@ -96,6 +107,10 @@ jobs:
             # would ship packages whose --version lies.
             [[ "$tag" == "$crate" ]] || { echo "tag v$tag != Cargo.toml $crate"; exit 1; }
             echo "label=$crate" >> "$GITHUB_OUTPUT"
+          elif [[ "$RELEASING" == "true" ]]; then
+            # The release tags this commit, so it must be what main ships.
+            [[ "$GITHUB_REF" == refs/heads/main ]] || { echo "manual releases run on main only"; exit 1; }
+            echo "label=$crate" >> "$GITHUB_OUTPUT"
           else
             echo "label=$crate-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           fi
@@ -164,11 +179,13 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release)
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -176,10 +193,26 @@ jobs:
           pattern: nodeloom-*
           path: dist
           merge-multiple: true
+      - name: Tag
+        id: tag
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+            # An existing tag means this version already shipped (or is being
+            # shipped by a tag push); never move or reuse it.
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+              echo "$tag already exists; bump the version in Cargo.toml first"
+              exit 1
+            fi
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           set -euo pipefail
           cd dist
@@ -190,8 +223,10 @@ jobs:
           [ -s notes.md ] || { echo "CHANGELOG.md has no section for ${TAG#v}"; exit 1; }
           flags=()
           if [[ "$TAG" == *-* ]]; then flags+=(--prerelease); fi
-          gh release create "$TAG" --title "Nodeloom $TAG" --notes-file notes.md "${flags[@]}" \
-            nodeloom-* SHA256SUMS
+          # On a manual run the tag does not exist yet; --target creates it on
+          # the commit these packages were built from.
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "Nodeloom $TAG" \
+            --notes-file notes.md "${flags[@]}" nodeloom-* SHA256SUMS
 
   # Installs from the published release the way a teammate would, through
   # the GitHub CLI, so a broken download path is caught at release time.
@@ -204,7 +239,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NODELOOM_REPO: ${{ github.repository }}
-          NODELOOM_VERSION: ${{ github.ref_name }}
+          NODELOOM_VERSION: ${{ needs.release.outputs.tag }}
           NODELOOM_INSTALL_DIR: ${{ runner.temp }}/bin
         run: |
           set -euo pipefail
