@@ -38,6 +38,6 @@
 - Rust: 90개 (proto 5, core 28, agent 6, Blender 러너 4, master 단위 27, master 통합 20). `embed-ui`로 빌드하면 대시보드 묶음 확인 1개가 더 돈다
 - UI: 33개 (`apps/desktop/src/lib/*.test.ts`)
 - CI: GitHub Actions에서 실행 중이다(Rust 5개 러너: 리눅스 x64·arm64, 맥 arm64, 윈도우 x64·arm64 / UI / 데스크톱 셸 3개 OS).
-  - `binaries` 워크플로가 `main`에 들어갈 때마다 대시보드를 담은 에이전트·마스터 패키지 5종(linux-x64·arm64는 정적 링크, windows-x64·arm64, macos-arm64)을 만들어 30일간 산출물로 둔다. `v*` 태그를 붙이면 릴리즈로 올리고, 그 릴리즈에서 다시 설치해 확인한다. 데스크톱 셸(Tauri)의 ARM 빌드는 아직 없다.
+  - `binaries` 워크플로가 `main`에 들어갈 때마다 대시보드를 담은 에이전트·마스터 패키지 5종(linux-x64·arm64는 정적 링크, windows-x64·arm64, macos-arm64)을 만들어 30일간 산출물로 둔다. `v*` 태그를 붙이거나 수동 실행에서 "release"를 체크하면 릴리즈로 올리고, 그 릴리즈에서 다시 설치해 확인한다. 데스크톱 셸(Tauri)의 ARM 빌드는 아직 없다.
   - 첫 실행(`c7090cf`)에서 Rust 작업이 실패했다. CI의 Rust 1.99 clippy가 새로 잡는 `result_large_err` 경고 때문이었고, 수정했다.
   - 데스크톱 셸은 맥·윈도우·리눅스에서 **빌드만** 성공했고, 실행은 확인하지 않았다.
