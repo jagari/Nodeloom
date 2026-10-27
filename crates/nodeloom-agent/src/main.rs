@@ -160,6 +160,7 @@ async fn run(args: RunArgs, state_dir: PathBuf) -> Result<()> {
         token: args.token,
         runners,
         metrics_interval: Duration::from_secs(args.metrics_interval.max(1)),
+        status: None,
     })
     .await
 }

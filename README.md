@@ -75,16 +75,23 @@ Traffic is plain HTTP/WebSocket for now, so use it only on a network you trust.
 
 ## Install the beta
 
-Team beta `v0.1.0-beta.1` is on the Releases page: packages for Linux
-x64/arm64 (static, so they also run on Raspberry Pi OS and Jetson), Windows
-x64/arm64 and macOS arm64, each with an install script. Run
-`nodeloom-master` on one machine, open the dashboard link it prints, and run
-`nodeloom-agent` on the others. The full guide (Korean) is
-[docs/BETA.md](docs/BETA.md); changes are in [CHANGELOG.md](CHANGELOG.md).
+Team betas are on the Releases page.
 
-Every push to `main` also builds these packages as artifacts of the
-`binaries` workflow (kept for 30 days); a `v*` tag publishes them as a
-release.
+- **PCs**: install the desktop app (`.dmg` for macOS arm64, `.exe` for
+  Windows x64/arm64, `.deb` for Linux). On first start pick "Start a cluster
+  here" on one machine and "Join a cluster" on the others, then approve each
+  one in the dashboard after comparing codes.
+- **Headless machines** (Raspberry Pi, Jetson, servers): use the command-line
+  packages. They are static on Linux, so they run on Raspberry Pi OS and
+  JetPack. Each comes with an install script; run `nodeloom-master` on one
+  machine and `nodeloom-agent` on the others.
+
+The full guide (Korean) is [docs/BETA.md](docs/BETA.md); changes are in
+[CHANGELOG.md](CHANGELOG.md).
+
+Every push to `main` also builds these packages and installers as artifacts
+of the `binaries` workflow (kept for 30 days). A `v*` tag, or a manual run
+with "release" checked, publishes them as a release.
 
 ## Development
 

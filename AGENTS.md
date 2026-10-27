@@ -23,7 +23,7 @@
 | `crates/nodeloom-agent` | 각 기기에서 도는 데몬: 접속, 자원 보고, 작업 실행 | B |
 | `crates/nodeloom-runner-blender` | `blender -b`로 프레임 범위 렌더하는 내장 플러그인. **보류**(신규 기능 없음). 새 플러그인을 만들 때 구조 예시로 본다 | B |
 | `apps/desktop/src` | 데스크톱 UI (Svelte 5 + TypeScript) | C |
-| `apps/desktop/src-tauri` | Tauri 데스크톱 셸(워크스페이스와 별도 빌드) | D |
+| `apps/desktop/src-tauri` | 데스크톱 앱: 마스터·에이전트를 앱 안에서 실행, 트레이, 자동 실행, 설치 파일(워크스페이스와 별도 빌드, D16) | D |
 | `.github/workflows` | CI | D |
 | `docs/` | 아키텍처·결정·진행도 문서 | E (모두 갱신) |
 
@@ -60,7 +60,9 @@ pnpm check && pnpm test && pnpm build
 pnpm dev            # http://localhost:5173
 
 # 데스크톱 셸 (Tauri 시스템 라이브러리 필요)
-cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml
+cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml   # apps/desktop에서 pnpm build 먼저
+cd apps/desktop && pnpm tauri dev   # 앱 실행(개발)
 ```
 
 CI는 **항상 최신 stable Rust**를 쓴다. 로컬 Rust가 오래되면 로컬에서는 통과한 clippy가 CI에서 실패할 수 있으니, 작업 전에 `rustup update stable`을 실행한다.

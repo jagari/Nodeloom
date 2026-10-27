@@ -137,6 +137,28 @@ master → agent   Rejected { reason }                    기기가 제거되면
 - 마스터가 관리 토큰을 처음 만들면 `http://<마스터 IP>:7878/#token=<토큰>` 링크를 한 번 출력한다. URL 조각(`#…`)은 서버로 전송되지 않는다. 페이지는 토큰을 저장한 뒤 주소창에서 지운다.
 - 페이지 자체에는 인증이 없다. 보여 주는 정보는 모두 토큰이 필요한 API에서 온다.
 
+## 데스크톱 앱 (`apps/desktop/src-tauri`, D16)
+
+마스터·에이전트 라이브러리를 앱 프로세스 안에서 실행한다. 데이터 폴더는 명령줄 버전과 같다.
+
+```
+첫 실행 → 역할 선택(settings.json) → 앱 재시작
+  마스터 역할: [마스터] ← loopback·관리 토큰 ← [이 기기의 에이전트]
+              창 = http://127.0.0.1:7878/#token=… (마스터가 제공하는 대시보드)
+  참여 역할:   [에이전트] → mDNS로 마스터를 찾을 때까지 반복 → 대기(코드) → 승인 → 연결
+              창 = 앱 화면(상태·코드·설정)
+```
+
+- `services.rs`: 역할에 맞게 서비스를 시작한다. 반환하는 `Running`을 버리면 서비스가 멈춘다. 포트가 사용 중이면 그 이유를 오류로 돌려준다.
+- `settings.rs`: 역할을 저장한다. 파일이 깨졌으면 역할을 다시 묻는다.
+- `lib.rs`: 창, 트레이, 자동 실행, 중복 실행 방지, 로컬 명령을 다룬다.
+  - 명령: `app_state`, `choose_role`, `set_autostart`, `reset_identity`, `open_dashboard`
+  - 명령은 앱 자체 파일에서만 부를 수 있다. 대시보드(원격 페이지)는 부를 수 없다.
+- 에이전트 상태(`nodeloom_agent::AgentStatus`): `searching`, `connecting(last_error)`, `waiting_for_approval(code)`, `joined`. 앱 화면이 1초마다 읽는다.
+- UI는 페이지 출처로 화면을 고른다(`src/lib/app.ts`의 `inDesktopApp`).
+  - 앱 자체 파일(`tauri://localhost`, Windows는 `http://tauri.localhost`)이면 설정·상태 화면을 보인다.
+  - 그 밖에는 대시보드를 보인다.
+
 ## UI용 API (`nodeloom-master/src/server.rs`)
 
 | 경로 | 설명 |

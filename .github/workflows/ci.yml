@@ -98,4 +98,7 @@ jobs:
         working-directory: apps/desktop
       - run: pnpm build
         working-directory: apps/desktop
-      - run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml
+      # The app links the master with the dashboard bundled, so the UI
+      # build above comes first.
+      - run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
