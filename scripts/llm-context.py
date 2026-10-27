@@ -31,7 +31,8 @@ AREAS = {
            "apps/desktop/src/lib/devices.ts", "apps/desktop/src/App.svelte", "apps/desktop/src/app.css"],
     "platform": ["docs/ARCHITECTURE.md", "docs/BETA.md", ".github/workflows/ci.yml",
                  ".github/workflows/binaries.yml", "scripts/install.sh", "apps/desktop/src-tauri/tauri.conf.json",
-                 "apps/desktop/package.json"],
+                 "apps/desktop/src-tauri/src/lib.rs", "apps/desktop/src-tauri/src/services.rs",
+                 "apps/desktop/src/lib/app.ts", "apps/desktop/package.json"],
     "biz": ["docs/DECISIONS.md", "README.md"],
 }
 
