@@ -42,6 +42,9 @@ pub struct Options {
     pub dirs: Dirs,
     pub port: u16,
     pub mdns: bool,
+    /// How long to keep trying a port that is in use. Right after a
+    /// restart the previous process may still be letting go of it.
+    pub port_wait: Duration,
 }
 
 impl Options {
@@ -50,6 +53,7 @@ impl Options {
             dirs: Dirs::standard()?,
             port: DEFAULT_PORT,
             mdns: true,
+            port_wait: Duration::from_secs(5),
         })
     }
 }
@@ -99,12 +103,14 @@ pub async fn start(role: Role, options: Options) -> Result<Running> {
             let dir = &options.dirs.master_data;
             let store = DeviceStore::open(dir)?;
             let bind = SocketAddr::from((Ipv4Addr::UNSPECIFIED, options.port));
-            let listener = TcpListener::bind(bind).await.with_context(|| {
-                format!(
-                    "port {} is already in use; is another Nodeloom master running?",
-                    options.port
-                )
-            })?;
+            let listener = bind_waiting(bind, options.port_wait)
+                .await
+                .with_context(|| {
+                    format!(
+                        "port {} is already in use; is another Nodeloom master running?",
+                        options.port
+                    )
+                })?;
             let addr = listener.local_addr()?;
             let (token, _) = load_admin_token(dir, false)
                 .with_context(|| format!("admin token in {}", dir.display()))?;
@@ -177,6 +183,21 @@ pub async fn start(role: Role, options: Options) -> Result<Running> {
     })
 }
 
+async fn bind_waiting(addr: SocketAddr, wait: Duration) -> std::io::Result<TcpListener> {
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        match TcpListener::bind(addr).await {
+            Err(e)
+                if e.kind() == std::io::ErrorKind::AddrInUse
+                    && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            result => return result,
+        }
+    }
+}
+
 /// Unlike the command-line agent, which gives up after 30 seconds, the app
 /// keeps looking: the master may simply not be switched on yet.
 async fn find_master_forever() -> String {
@@ -203,6 +224,7 @@ mod tests {
             },
             port: 0,
             mdns: false,
+            port_wait: Duration::ZERO,
         }
     }
 
@@ -262,6 +284,23 @@ mod tests {
         options.port = taken.local_addr().unwrap().port();
         let error = start(Role::Master, options).await.err().unwrap();
         assert!(format!("{error:#}").contains("already in use"));
+    }
+
+    #[tokio::test]
+    async fn a_port_freed_during_the_wait_is_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let taken = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+        let mut options = options_in(dir.path());
+        options.port = taken.local_addr().unwrap().port();
+        options.port_wait = Duration::from_secs(5);
+        // The previous process lets go of the port shortly after we start.
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            drop(taken);
+        });
+        let running = start(Role::Master, options).await.unwrap();
+        release.join().unwrap();
+        assert!(running.master.is_some());
     }
 
     #[tokio::test]

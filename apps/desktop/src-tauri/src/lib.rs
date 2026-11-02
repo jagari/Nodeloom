@@ -8,6 +8,7 @@
 //!   access to these commands. Cluster data only ever comes through the
 //!   master's HTTP API (D4); the commands here manage the app itself (D16).
 
+mod logging;
 mod services;
 mod settings;
 
@@ -52,6 +53,8 @@ struct AppView {
     master: Option<MasterView>,
     autostart: bool,
     error: Option<String>,
+    /// Where the log is, to attach to a bug report.
+    log_file: Option<String>,
 }
 
 #[tauri::command]
@@ -67,7 +70,22 @@ fn app_state(app: AppHandle, state: State<'_, AppState>) -> AppView {
         }),
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
         error: state.error.clone(),
+        log_file: logging::file().map(|p| p.display().to_string()),
     }
+}
+
+/// Restarts the app into a new process.
+///
+/// `AppHandle::restart` on the main thread skips `RunEvent::Exit`, which is
+/// where the single-instance plugin lets go of its lock. On Windows the new
+/// process then found the lock, handed itself over to this exiting one
+/// (waiting up to 10 seconds for an answer) and quit, leaving nothing
+/// running. Releasing the lock first lets the new process start. The
+/// commands that call this stay synchronous, so they run on the main thread,
+/// which owns the plugin's window and mutex.
+fn restart(app: &AppHandle) -> ! {
+    tauri_plugin_single_instance::destroy(app);
+    app.restart()
 }
 
 /// Saves the role (or clears it to ask again) and restarts into it.
@@ -83,7 +101,7 @@ fn choose_role(
     if let Some(enabled) = autostart {
         set_autostart(app.clone(), enabled)?;
     }
-    app.restart()
+    restart(&app)
 }
 
 #[tauri::command]
@@ -103,7 +121,7 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
 fn reset_identity(app: AppHandle) -> Result<(), String> {
     let dirs = services::Dirs::standard().map_err(|e| e.to_string())?;
     nodeloom_agent::identity::reset(&dirs.agent_state).map_err(|e| e.to_string())?;
-    app.restart()
+    restart(&app)
 }
 
 /// Opens the dashboard window (master machines only).
@@ -124,6 +142,9 @@ fn page_for(state: &AppState) -> WebviewUrl {
     }
 }
 
+// Both windows are built once, in `setup`, and only shown or hidden after
+// that. On Windows, building a webview window from a synchronous command or
+// an event handler (a tray click) deadlocks in WebView2, and the app froze.
 fn build_main(app: &AppHandle, visible: bool) -> tauri::Result<()> {
     let state = app.state::<AppState>();
     WebviewWindowBuilder::new(app, "main", page_for(&state))
@@ -135,45 +156,42 @@ fn build_main(app: &AppHandle, visible: bool) -> tauri::Result<()> {
     Ok(())
 }
 
-fn show_main(app: &AppHandle) {
-    match app.get_webview_window("main") {
+/// On a master machine the main window holds the dashboard, so the app's
+/// own page (settings) gets a small window of its own.
+fn build_settings(app: &AppHandle) -> tauri::Result<()> {
+    WebviewWindowBuilder::new(app, "settings", WebviewUrl::default())
+        .title("Nodeloom settings")
+        .inner_size(520.0, 640.0)
+        .min_inner_size(420.0, 480.0)
+        .visible(false)
+        .build()?;
+    Ok(())
+}
+
+fn show(app: &AppHandle, label: &str) {
+    match app.get_webview_window(label) {
         Some(window) => {
             let _ = window.unminimize();
             let _ = window.show();
             let _ = window.set_focus();
         }
-        None => {
-            if let Err(e) = build_main(app, true) {
-                tracing::error!("cannot open the window: {e}");
-            }
-        }
+        // Windows are hidden, never closed, so this means building one failed
+        // at start-up; that error is in the log.
+        None => tracing::error!("the {label} window is missing"),
     }
 }
 
-/// The app's own page. On a master machine the main window holds the
-/// dashboard, so settings get a small window of their own.
+fn show_main(app: &AppHandle) {
+    show(app, "main");
+}
+
 fn show_settings(app: &AppHandle) {
-    let has_dashboard = app
-        .state::<AppState>()
-        .running
-        .as_ref()
-        .is_some_and(|r| r.master.is_some());
-    if !has_dashboard {
-        return show_main(app);
-    }
-    if let Some(window) = app.get_webview_window("settings") {
-        let _ = window.show();
-        let _ = window.set_focus();
-        return;
-    }
-    let built = WebviewWindowBuilder::new(app, "settings", WebviewUrl::default())
-        .title("Nodeloom settings")
-        .inner_size(520.0, 640.0)
-        .min_inner_size(420.0, 480.0)
-        .build();
-    if let Err(e) = built {
-        tracing::error!("cannot open settings: {e}");
-    }
+    let label = if app.get_webview_window("settings").is_some() {
+        "settings"
+    } else {
+        "main"
+    };
+    show(app, label);
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
@@ -198,11 +216,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-        )
-        .init();
+    logging::init();
 
     let app = tauri::Builder::default()
         // First, so a second launch only brings this one forward instead
@@ -253,14 +267,20 @@ pub fn run() {
             // the setup page.
             let hidden = role.is_some() && std::env::args().any(|a| a == HIDDEN_FLAG);
             build_main(app.handle(), !hidden)?;
+            if app
+                .state::<AppState>()
+                .running
+                .as_ref()
+                .is_some_and(|r| r.master.is_some())
+            {
+                build_settings(app.handle())?;
+            }
             Ok(())
         })
         // Closing a window hides it; the services keep running until
         // "Quit" in the tray.
         .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event
-                && window.label() == "main"
-            {
+            if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
             }
