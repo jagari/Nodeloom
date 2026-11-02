@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ClusterClient, parseEndpoint, type ConnectionStatus } from './lib/client';
+  import { ClusterClient, parseEndpoint, type ConnectionStatus, type MasterInfo } from './lib/client';
   import { lookalikes, pairedRows } from './lib/devices';
   import { updateHistory, type History } from './lib/history';
   import { initialConnection } from './lib/launch';
   import { displayNames } from './lib/names';
   import type { ClusterSnapshot, NodeId, TaskPayload } from './lib/types';
+  import AddMachine from './components/AddMachine.svelte';
   import ConnectForm from './components/ConnectForm.svelte';
   import JobList from './components/JobList.svelte';
   import Kpis from './components/Kpis.svelte';
@@ -51,6 +52,7 @@
   let snapshot = $state<ClusterSnapshot>(EMPTY);
   let history = $state<History>({});
   let client = $state<ClusterClient | null>(null);
+  let info = $state<MasterInfo | null>(null);
 
   function start(nextHost: string, nextToken: string) {
     client?.stop();
@@ -62,6 +64,7 @@
     save(TOKEN_KEY, nextToken);
     history = {};
     snapshot = EMPTY;
+    info = null;
     client = new ClusterClient(endpoint, nextToken, {
       onSnapshot(s) {
         snapshot = s;
@@ -69,6 +72,13 @@
       },
       onStatus(s) {
         status = s;
+        // Asked once connected: the address other machines join at.
+        if (s === 'live' && !info) {
+          client
+            ?.info()
+            .then((i) => (info = i))
+            .catch(() => {});
+        }
       },
     });
     client.start();
@@ -141,10 +151,7 @@
       <section>
         <h2>Machines</h2>
         {#if snapshot.nodes.length === 0}
-          <p class="muted">
-            No machine is online. Start <code>nodeloom-agent</code> on a machine on this network; it will appear
-            here for approval.
-          </p>
+          <p class="muted">No machine is online yet. See <strong>Add a machine</strong> below.</p>
         {:else}
           <div class="nodes">
             {#each snapshot.nodes as node (node.info.id)}
@@ -153,6 +160,8 @@
           </div>
         {/if}
       </section>
+
+      <AddMachine {info} open={snapshot.nodes.length <= 1 && snapshot.pending.length === 0} />
 
       <SubmitForm nodes={snapshot.nodes} {submit} />
       <JobList {snapshot} />
@@ -227,10 +236,5 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 12px;
-  }
-  code {
-    background: var(--surface);
-    padding: 1px 5px;
-    border-radius: 4px;
   }
 </style>

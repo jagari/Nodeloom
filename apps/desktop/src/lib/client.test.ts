@@ -69,6 +69,17 @@ describe('ClusterClient requests', () => {
     await expect(client.ignore('ab12')).rejects.toThrow(/admin token/);
   });
 
+  it('asks the master where machines can join', async () => {
+    const calls = withFetch(200, '{"version":"0.1.0-beta.3","join_address":"192.168.0.12:7878"}');
+    const client = new ClusterClient(endpoint, 'secret', handlers);
+    expect(await client.info()).toEqual({ version: '0.1.0-beta.3', join_address: '192.168.0.12:7878' });
+    expect(calls[0]!.url).toBe('http://master:7878/api/info');
+    withFetch(404);
+    expect(await client.info()).toBeNull();
+    withFetch(401);
+    await expect(client.info()).rejects.toThrow(/admin token/);
+  });
+
   it('sends jobs as JSON', async () => {
     const calls = withFetch(200, '{"job_id":1,"tasks":[]}');
     const client = new ClusterClient(endpoint, 'secret', handlers);

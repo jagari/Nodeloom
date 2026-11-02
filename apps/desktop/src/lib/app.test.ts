@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeAgent, inDesktopApp, masterHost } from './app';
+import { describeAgent, inDesktopApp, masterHost, offerAddress } from './app';
 
 describe('inDesktopApp', () => {
   const bridge = { __TAURI_INTERNALS__: {} };
@@ -63,5 +63,22 @@ describe('describeAgent', () => {
     });
     expect(summary).toMatchObject({ tone: 'problem', removed: true, title: 'Removed from 10.0.0.2:7878' });
     expect(summary.detail).not.toContain('nodeloom-agent');
+  });
+});
+
+describe('offerAddress', () => {
+  const master = 'ws://10.0.0.2:7878/ws/agent';
+
+  it('offers it while nothing is found or joining fails', () => {
+    expect(offerAddress({ state: 'searching' }, null)).toBe(true);
+    expect(offerAddress({ state: 'connecting', master, last_error: 'refused' }, null)).toBe(true);
+  });
+  it('stays out of the way while joining works', () => {
+    expect(offerAddress({ state: 'connecting', master, last_error: null }, null)).toBe(false);
+    expect(offerAddress({ state: 'waiting_for_approval', master, code: '1' }, null)).toBe(false);
+    expect(offerAddress({ state: 'joined', master }, null)).toBe(false);
+  });
+  it('always shows a typed address so it can be changed', () => {
+    expect(offerAddress({ state: 'joined', master }, '10.0.0.2:7878')).toBe(true);
   });
 });

@@ -31,6 +31,8 @@ const HIDDEN_FLAG: &str = "--hidden";
 struct AppState {
     settings_path: PathBuf,
     role: Option<Role>,
+    /// The master address typed in on an agent machine, if any.
+    master_address: Option<String>,
     running: Option<Running>,
     /// Why the services for `role` did not start.
     error: Option<String>,
@@ -51,6 +53,8 @@ struct AppView {
     code: Option<String>,
     agent: Option<AgentStatus>,
     master: Option<MasterView>,
+    /// Set when this machine joins a typed address instead of searching.
+    master_address: Option<String>,
     autostart: bool,
     error: Option<String>,
     /// Where the log is, to attach to a bug report.
@@ -68,6 +72,7 @@ fn app_state(app: AppHandle, state: State<'_, AppState>) -> AppView {
         master: running.and_then(|r| r.master.as_ref()).map(|m| MasterView {
             lan_url: m.lan_url.clone(),
         }),
+        master_address: state.master_address.clone(),
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
         error: state.error.clone(),
         log_file: logging::file().map(|p| p.display().to_string()),
@@ -97,10 +102,31 @@ fn choose_role(
     role: Option<Role>,
     autostart: Option<bool>,
 ) -> Result<(), String> {
-    settings::save(&state.settings_path, &Settings { role }).map_err(|e| e.to_string())?;
+    let settings = Settings { role, master: None };
+    settings::save(&state.settings_path, &settings).map_err(|e| e.to_string())?;
     if let Some(enabled) = autostart {
         set_autostart(app.clone(), enabled)?;
     }
+    restart(&app)
+}
+
+/// Joins the master at a typed address (or, with `None`, goes back to
+/// finding it on the network), then restarts into it.
+#[tauri::command]
+fn set_master_address(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    address: Option<String>,
+) -> Result<(), String> {
+    let master = address
+        .as_deref()
+        .map(settings::master_address)
+        .transpose()?;
+    let settings = Settings {
+        role: state.role,
+        master,
+    };
+    settings::save(&state.settings_path, &settings).map_err(|e| e.to_string())?;
     restart(&app)
 }
 
@@ -233,18 +259,25 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_state,
             choose_role,
+            set_master_address,
             set_autostart,
             reset_identity,
             open_dashboard
         ])
         .setup(|app| {
             let settings_path = app.path().app_config_dir()?.join("settings.json");
-            let role = settings::load(&settings_path).role;
+            let saved = settings::load(&settings_path);
+            let role = saved.role;
+            let master_address = saved.master.filter(|_| role == Some(Role::Agent));
             let (running, error) = match role {
                 None => (None, None),
                 Some(role) => {
                     let started = tauri::async_runtime::block_on(async {
-                        services::start(role, Options::standard()?).await
+                        let options = Options {
+                            master: master_address.clone(),
+                            ..Options::standard()?
+                        };
+                        services::start(role, options).await
                     });
                     match started {
                         Ok(running) => (Some(running), None),
@@ -258,6 +291,7 @@ pub fn run() {
             app.manage(AppState {
                 settings_path,
                 role,
+                master_address,
                 running,
                 error,
             });
