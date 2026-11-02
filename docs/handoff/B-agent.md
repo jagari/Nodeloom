@@ -51,4 +51,17 @@
 
 ## 진행 메모
 
-(작업하면서 여기에 적는다)
+- **P0-1 완료 (`crates/nodeloom-agent/src/lib.rs`, `crates/nodeloom-agent/tests/reconnect.rs`)**:
+  - `keepalive(metrics_interval)`로 Ping 주기(`metrics_interval × 5`, 1~5초)와 무응답 한계(`metrics_interval × 15`, 3~15초)를 계산한다(`AgentConfig` 필드 추가 없음).
+  - 승인(`Welcome`) 이후 세션 루프에서 주기적으로 `Message::Ping`을 전송하고, `next_master_message`는 Ping/Pong을 건너뛰기 전에 모든 수신 프레임마다 `last_heard`를 갱신한다.
+  - 무응답 한계 동안 아무 프레임도 받지 못하면 `Err("the master stopped answering")`로 세션을 종료하며, `run_forever`가 `AgentStatus::Connecting { last_error: Some(...) }`를 보고한 뒤 재연결한다.
+  - `crates/nodeloom-agent/tests/reconnect.rs`에 `tokio-tungstenite` 가짜 마스터 테스트(`reconnects_when_the_master_stops_answering`)를 추가했다.
+- **P0-2 완료 (`crates/nodeloom-agent/src/lib.rs`, `crates/nodeloom-agent/src/main.rs`)**:
+  - `find_master_forever`와 내부 반복 헬퍼 `retry_until_ok`를 추가해, 마스터를 찾을 때까지 2초 간격으로 재시도한다(`retry_until_ok_keeps_trying_until_it_succeeds` 단위 테스트 포함).
+  - `--metrics-interval` 인자를 `clap::value_parser!(u64).range(1..=5)`로 1~5초로 제한하고 단위 테스트(`metrics_interval_is_one_to_five_seconds`)를 추가했다.
+- **P1 완료 (`crates/nodeloom-agent/src/lib.rs`, `crates/nodeloom-agent/src/main.rs`)**:
+  - `run_forever` 시그니처는 그대로 유지하고, 새 공개 함수 `run_forever_discovering` 및 상수 `REDISCOVER_AFTER_FAILURES (= 5)`를 추가했다.
+  - 탐색으로 찾은 마스터에 연속 5회 접속(`Welcome` 이전)이 실패하면 `find` 클로저를 다시 호출해 새 주소를 탐색한다(`looks_for_the_master_again_after_repeated_failures` 단위 테스트 포함).
+- **문서 반영 요청 (E에게)**:
+  - 에이전트가 승인 후에도 `metrics_interval × 5`(1~5초)마다 WebSocket Ping을 보내고 `metrics_interval × 15`(3~15초) 동안 프레임이 없으면 재연결함.
+  - 명령줄 에이전트(`nodeloom-agent`)는 `--master` 생략 시 마스터를 찾을 때까지 계속 탐색하며, 연속 5회 접속 실패 시 mDNS 탐색을 다시 수행함. `--metrics-interval`은 1~5초로 제한됨.
