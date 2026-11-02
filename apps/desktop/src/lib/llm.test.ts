@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { availableModels, llmJob, parsePrompts, promptProblem, SAMPLE_PROMPTS, unitWord } from './llm';
+import { translator, unitWord } from './i18n';
+import { availableModels, llmJob, parsePrompts, promptProblem, SAMPLE_PROMPTS, unitOf } from './llm';
 import type { NodeView } from './types';
+
+const en = translator('en');
 
 function node(id: string, models?: string[]): NodeView {
   return {
@@ -36,10 +39,10 @@ describe('prompts', () => {
   });
 
   it('explains what cannot be sent', () => {
-    expect(promptProblem([])).toMatch(/at least one/);
-    expect(promptProblem(Array(201).fill('q'))).toMatch(/At most 200/);
-    expect(promptProblem(['ok', 'x'.repeat(2001)])).toMatch(/Question 2/);
-    expect(promptProblem(SAMPLE_PROMPTS)).toBe('');
+    expect(promptProblem([], en)).toMatch(/at least one/);
+    expect(promptProblem(Array(201).fill('q'), en)).toMatch(/At most 200/);
+    expect(promptProblem(['ok', 'x'.repeat(2001)], en)).toMatch(/Question 2/);
+    expect(promptProblem(SAMPLE_PROMPTS, en)).toBe('');
   });
 
   it('numbers the questions as frames', () => {
@@ -55,8 +58,8 @@ describe('prompts', () => {
 
 describe('unitWord', () => {
   it('speaks of questions for LLM jobs', () => {
-    expect(unitWord('llm', 1)).toBe('question');
-    expect(unitWord('llm', 12)).toBe('questions');
-    expect(unitWord('fake', 600)).toBe('frames');
+    expect(unitWord(en, unitOf('llm'), 1)).toBe('question');
+    expect(unitWord(en, unitOf('llm'), 12)).toBe('questions');
+    expect(unitWord(en, unitOf('fake'), 600)).toBe('frames');
   });
 });

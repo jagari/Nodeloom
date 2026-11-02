@@ -79,3 +79,10 @@
   - 기기가 1대 이하이거나 승인 대기가 있으면 승인 카드와 Add a machine(펼침)이 맨 위, 아니면 접어서 맨 아래. Paired machines도 접음.
   - 행 안의 CPU 스파크라인은 뺐다(44px로는 안 보이고, 화면 낭독용 표가 표 셀 안에서 가로 스크롤을 만들었다). `Sparkline.svelte` 삭제, `history.ts`는 P1 KPI용으로 남김.
   - 세로로 쌓는 기준은 1100px 미만(창 1280이면 스크롤바·창 테두리로 뷰포트가 1280보다 조금 좁아질 수 있어서).
+- 2026-11-03 한국어/영어 전환(브랜치 `feat/37-language`, Refs #37).
+  - 사전과 번역 함수는 `src/lib/i18n.ts`(순수 TS라 D의 AppPage도 가져다 쓸 수 있다), 현재 언어 상태는 `src/lib/locale.svelte.ts`의 `$state`. 컴포넌트는 `t(key, params)`만 부른다.
+  - 한국어 사전은 `satisfies Record<MessageKey, Message>`라 키가 빠지거나 남으면 타입 오류. 복수형은 `{ one, other }`를 `Intl.PluralRules`로 고르고, 한국어는 "기기 3대"처럼 한 형태.
+  - 문장 안의 코드·굵은 글씨·링크는 `Rich.svelte`(자리 표시를 같은 이름의 snippet으로 그림)로 넣어 언어마다 어순을 따른다.
+  - 화면 문장을 만들던 lib 함수(`lookalikes`, `promptProblem`, `summaryProgress`, `jobRole`, `documentProblem`, `workLabel`)는 `t`를 인자로 받는다. client.ts·pdf.ts가 직접 쓰는 오류는 `MessageError`(키+값, message는 영어), 화면은 `errorText(e, t)`로 보인다. 마스터가 보낸 오류 원문은 그대로.
+  - 잡은 오류는 문자열이 아니라 오류 그대로 상태에 두어, 언어를 바꾸면 이미 떠 있는 오류 문구도 바뀐다.
+  - "Join a cluster", "Enter the address"는 AppPage(D)의 버튼 이름이라 번역하지 않았다. AppPage가 번역되면 같이 바꾼다.

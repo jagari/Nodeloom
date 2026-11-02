@@ -1,8 +1,11 @@
 <script lang="ts">
+  import { errorText } from '../lib/i18n';
   import { availableModels } from '../lib/llm';
+  import { t } from '../lib/locale.svelte';
   import { countChars, documentProblem, estimateParts, readDocument } from '../lib/pdf';
   import { summaryProgress } from '../lib/summary';
   import type { ClusterSnapshot, SubmitSummary, SummaryView } from '../lib/types';
+  import Rich from './Rich.svelte';
   import StatusBadge from './StatusBadge.svelte';
 
   interface Props {
@@ -17,28 +20,31 @@
     if (models.length > 0 && !models.some((m) => m.model === model)) model = models[0]!.model;
   });
   const machines = $derived(models.find((m) => m.model === model)?.machines ?? 0);
+  const machineCount = $derived(t('count.machine', { count: machines }));
 
   // The document read so far; only its text is sent to the master.
   let file = $state<{ name: string; text: string; pages: number | null; chars: number } | null>(null);
-  let reading = $state('');
+  /** Reading progress: pages so far, or 0 of 0 before the first. Null when not reading. */
+  let reading = $state<{ done: number; total: number } | null>(null);
   let busy = $state(false);
-  let error = $state('');
-  const problem = $derived(file ? documentProblem(file.text) : '');
+  // Kept as caught (with the file it was about), so the text follows a language switch.
+  let error = $state<{ error: unknown; file?: string } | null>(null);
+  const problem = $derived(file ? documentProblem(file.text, t) : '');
 
   async function onchange(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     const chosen = input.files?.[0];
     if (!chosen) return;
-    error = '';
+    error = null;
     file = null;
-    reading = 'Reading…';
+    reading = { done: 0, total: 0 };
     try {
-      const doc = await readDocument(chosen, (done, total) => (reading = `Reading page ${done} of ${total}…`));
+      const doc = await readDocument(chosen, (done, total) => (reading = { done, total }));
       file = { name: chosen.name, text: doc.text, pages: doc.pages, chars: countChars(doc.text) };
     } catch (e) {
-      error = `Could not read ${chosen.name}: ${e instanceof Error ? e.message : String(e)}`;
+      error = { error: e, file: chosen.name };
     } finally {
-      reading = '';
+      reading = null;
       // Choosing the same file again reads it again.
       input.value = '';
     }
@@ -46,20 +52,27 @@
 
   async function start() {
     if (!file) return;
-    error = '';
+    error = null;
     busy = true;
     try {
       await summarize({ model, title: file.name, text: file.text });
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      error = { error: e };
     } finally {
       busy = false;
     }
   }
 
+  const errorMessage = $derived(
+    !error
+      ? ''
+      : error.file
+        ? t('summary.readFailed', { name: error.file, error: errorText(error.error, t) })
+        : errorText(error.error, t),
+  );
+
   // Newest first; only the newest result starts open.
   const summaries = $derived([...(snapshot.summaries ?? [])].reverse());
-  const fmt = (n: number) => n.toLocaleString('en-US');
 
   let copied = $state<number | null>(null);
   async function copy(s: SummaryView) {
@@ -76,15 +89,15 @@
 <section class="card">
   <div class="head">
     <div class="intro">
-      <h2>Summarize a document</h2>
+      <h2>{t('summary.title')}</h2>
       {#if models.length === 0}
-        <p class="muted">Needs a machine with a local AI model; see <strong>Ask the local AI</strong> above.</p>
-      {:else}
         <p class="muted">
-          Open a PDF or text file. Its parts are summarized at the same time on {machines} machine{machines === 1
-            ? ''
-            : 's'}, then combined into one summary. Only the text leaves this screen.
+          <Rich text={t('summary.needsModel')}>
+            {#snippet ask()}<strong>{t('ai.title')}</strong>{/snippet}
+          </Rich>
         </p>
+      {:else}
+        <p class="muted">{t('summary.intro', { machines: machineCount })}</p>
       {/if}
     </div>
   </div>
@@ -92,61 +105,71 @@
   {#if models.length > 0}
     <div class="fields">
       <label class="field file">
-        <span>Document (.pdf, .txt, .md)</span>
+        <span>{t('summary.file')}</span>
         <input type="file" accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown" {onchange} disabled={!!reading || busy} />
       </label>
       {#if models.length > 1}
         <label class="field">
-          <span>Model</span>
+          <span>{t('ai.model')}</span>
           <select bind:value={model}>
             {#each models as m (m.model)}
-              <option value={m.model}>{m.model} · {m.machines} machine{m.machines === 1 ? '' : 's'}</option>
+              <option value={m.model}>{m.model} · {t('count.machine', { count: m.machines })}</option>
             {/each}
           </select>
         </label>
       {/if}
       <button class="btn primary big" type="button" disabled={!file || !!problem || busy || !!reading || !model} onclick={start}>
-        {busy ? 'Starting…' : `Summarize on ${machines} machine${machines === 1 ? '' : 's'}`}
+        {busy ? t('common.starting') : t('summary.start', { machines: machineCount })}
       </button>
     </div>
     <p class="muted doc" aria-live="polite">
       {#if reading}
-        {reading}
+        {reading.total ? t('summary.readingPage', reading) : t('summary.reading')}
       {:else if file}
         <strong>{file.name}</strong>
-        {#if file.pages !== null}· {file.pages} page{file.pages === 1 ? '' : 's'}{/if}
-        · {fmt(file.chars)} characters · about {estimateParts(file.chars)} part{estimateParts(file.chars) === 1 ? '' : 's'}
+        {#if file.pages !== null}· {t('count.page', { count: file.pages })}{/if}
+        · {t('count.char', { count: file.chars })}
+        · {t('summary.aboutParts', { parts: t('count.part', { count: estimateParts(file.chars) }) })}
       {/if}
     </p>
     {#if problem}<p class="error" role="alert">{problem}</p>{/if}
   {/if}
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if errorMessage}<p class="error" role="alert">{errorMessage}</p>{/if}
 
   {#each summaries as s, i (s.summary_id)}
-    {@const p = summaryProgress(s, snapshot.jobs)}
+    {@const p = summaryProgress(s, snapshot.jobs, t)}
     <article class="summary">
       <header>
         <div>
           <strong>{s.title}</strong>
-          <span class="muted">· {fmt(s.chars)} characters in {s.parts} part{s.parts === 1 ? '' : 's'} · {s.model}</span>
+          <span class="muted"
+            >· {t('summary.meta', { chars: t('count.char', { count: s.chars }), parts: t('count.part', { count: s.parts }) })} · {s.model}</span
+          >
         </div>
         <StatusBadge state={s.state} />
       </header>
       {#if s.state === 'running' && p}
         <div class="step">
-          <span>Step {p.step}: {p.label}{p.machines > 1 ? ` on ${p.machines} machines` : ''}</span>
+          <span
+            >{p.machines > 1
+              ? t('summary.stepOn', { step: p.step, label: p.label, machines: t('count.machine', { count: p.machines }) })
+              : t('summary.step', { step: p.step, label: p.label })}</span
+          >
           <span class="nums">{p.done} / {p.total}</span>
         </div>
         <div class="track" role="progressbar" aria-valuemin={0} aria-valuemax={p.total} aria-valuenow={p.done} aria-label={p.label}>
           <div class="fill" style:width="{p.total ? (p.done / p.total) * 100 : 0}%"></div>
         </div>
       {:else if s.state === 'failed'}
-        <p class="error">{s.error ?? 'Failed'}</p>
+        <!-- The master's own error is shown as sent. -->
+        <p class="error">{s.error ?? t('summary.failed')}</p>
       {:else if s.result}
         <details class="result" open={i === 0}>
-          <summary>Summary <span class="muted">({s.jobs.length} step{s.jobs.length === 1 ? '' : 's'})</span></summary>
+          <summary>{t('summary.result')} <span class="muted">({t('count.step', { count: s.jobs.length })})</span></summary>
           <p class="text">{s.result}</p>
-          <button class="btn" type="button" onclick={() => copy(s)}>{copied === s.summary_id ? 'Copied' : 'Copy'}</button>
+          <button class="btn" type="button" onclick={() => copy(s)}>
+            {copied === s.summary_id ? t('common.copied') : t('common.copy')}
+          </button>
         </details>
       {/if}
     </article>

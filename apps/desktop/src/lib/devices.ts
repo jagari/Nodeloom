@@ -1,3 +1,4 @@
+import type { MessageKey, Translate } from './i18n';
 import { displayNames } from './names';
 import type { NodeId, NodeView, PairedDevice, PendingDevice } from './types';
 
@@ -40,7 +41,7 @@ export function shownName(request: PendingDevice): string {
  * requests that look alike may mean someone is imitating a real machine, so
  * the person approving should check the code on the machine itself.
  */
-export function lookalikes(pending: PendingDevice[], devices: PairedDevice[]): Map<string, string> {
+export function lookalikes(pending: PendingDevice[], devices: PairedDevice[], t: Translate): Map<string, string> {
   const count = <T>(values: T[]) => {
     const counts = new Map<T, number>();
     for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
@@ -53,17 +54,17 @@ export function lookalikes(pending: PendingDevice[], devices: PairedDevice[]): M
 
   const reasons = new Map<string, string>();
   for (const p of pending) {
-    const reason =
+    const reason: MessageKey | null =
       (codes.get(p.code) ?? 0) > 1
-        ? 'Another waiting machine shows the same code.'
+        ? 'flag.sameCode'
         : (ids.get(p.info.id) ?? 0) > 1
-          ? 'Another waiting machine uses the same id.'
+          ? 'flag.sameId'
           : (hosts.get(sameName(shownName(p))) ?? 0) > 1
-            ? 'Another waiting machine has the same name.'
+            ? 'flag.sameName'
             : pairedNames.has(sameName(shownName(p)))
-              ? 'A paired machine already has this name.'
+              ? 'flag.pairedName'
               : null;
-    if (reason) reasons.set(p.public_key, reason);
+    if (reason) reasons.set(p.public_key, t(reason));
   }
   return reasons;
 }

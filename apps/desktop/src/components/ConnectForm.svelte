@@ -1,5 +1,7 @@
 <script lang="ts">
   import { parseEndpoint } from '../lib/client';
+  import { t } from '../lib/locale.svelte';
+  import Rich from './Rich.svelte';
 
   interface Props {
     initialHost: string;
@@ -22,22 +24,24 @@
 </script>
 
 <form class="card connect" {onsubmit}>
-  <h1>Connect to a master</h1>
+  <h1>{t('connect.title')}</h1>
   <p class="muted">
-    Start <code>nodeloom-master</code> on one machine, then enter its address and the admin token it prints the
-    first time (also saved as <code>admin-token</code> in its data folder).
+    <Rich text={t('connect.intro')}>
+      {#snippet master()}<code>nodeloom-master</code>{/snippet}
+      {#snippet file()}<code>admin-token</code>{/snippet}
+    </Rich>
   </p>
   <label class="field">
-    <span>Master address</span>
+    <span>{t('connect.address')}</span>
     <input bind:value={host} placeholder="192.168.1.20:7878" required spellcheck="false" />
   </label>
-  {#if invalid}<p class="problem" role="alert">That does not look like an address.</p>{/if}
+  {#if invalid}<p class="problem" role="alert">{t('connect.badAddress')}</p>{/if}
   <label class="field">
-    <span>Admin token</span>
+    <span>{t('connect.token')}</span>
     <input bind:value={token} type="password" autocomplete="off" required spellcheck="false" />
   </label>
   {#if problem}<p class="problem" role="alert">{problem}</p>{/if}
-  <button class="btn primary" type="submit">Connect</button>
+  <button class="btn primary" type="submit">{t('connect.submit')}</button>
 </form>
 
 <style>

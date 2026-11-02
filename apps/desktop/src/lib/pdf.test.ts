@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { translator } from './i18n';
 import { countChars, documentProblem, estimateParts, joinPages, MAX_DOCUMENT_CHARS, pageText } from './pdf';
+
+const en = translator('en');
 
 describe('pageText', () => {
   it('keeps line breaks and joins hyphenated words', () => {
@@ -27,13 +30,13 @@ describe('joinPages', () => {
 
 describe('documentProblem', () => {
   it('explains an empty (scanned) document', () => {
-    expect(documentProblem(' \n ')).toMatch(/scanned PDF/);
+    expect(documentProblem(' \n ', en)).toMatch(/scanned PDF/);
   });
 
   it('counts characters the way the master does', () => {
     expect(countChars('가나😀')).toBe(3);
-    expect(documentProblem('가'.repeat(MAX_DOCUMENT_CHARS))).toBe('');
-    expect(documentProblem('가'.repeat(MAX_DOCUMENT_CHARS + 1))).toMatch(/at most 200,000/);
+    expect(documentProblem('가'.repeat(MAX_DOCUMENT_CHARS), en)).toBe('');
+    expect(documentProblem('가'.repeat(MAX_DOCUMENT_CHARS + 1), en)).toMatch(/at most 200,000/);
   });
 });
 

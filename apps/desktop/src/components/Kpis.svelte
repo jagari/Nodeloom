@@ -1,5 +1,6 @@
 <script lang="ts">
   import { formatPercent } from '../lib/format';
+  import { t } from '../lib/locale.svelte';
   import type { ClusterSnapshot } from '../lib/types';
 
   let { snapshot }: { snapshot: ClusterSnapshot } = $props();
@@ -15,17 +16,17 @@
 </script>
 
 <!-- One small line next to the title: the map and list below carry the detail. -->
-<dl class="kpis" aria-label="Cluster summary">
+<dl class="kpis" aria-label={t('kpi.label')}>
   <div>
-    <dt>Machines online</dt>
+    <dt>{t('kpi.online')}</dt>
     <dd>{online}</dd>
   </div>
   <div>
-    <dt>Pieces running</dt>
+    <dt>{t('kpi.running')}</dt>
     <dd>{running}</dd>
   </div>
   <div>
-    <dt>Average CPU</dt>
+    <dt>{t('kpi.cpu')}</dt>
     <dd>{avgCpu === null ? '–' : formatPercent(avgCpu)}</dd>
   </div>
 </dl>

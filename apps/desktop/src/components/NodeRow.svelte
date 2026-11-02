@@ -1,7 +1,9 @@
 <script lang="ts">
   import { formatBytes, formatPercent, severity } from '../lib/format';
   import type { CurrentWork } from '../lib/jobs';
-  import { unitWord } from '../lib/llm';
+  import { unitWord } from '../lib/i18n';
+  import { unitOf } from '../lib/llm';
+  import { t } from '../lib/locale.svelte';
   import type { NodeView } from '../lib/types';
 
   interface Props {
@@ -17,6 +19,7 @@
   const m = $derived(node.metrics);
   const memPct = $derived(m && m.memory_total_bytes > 0 ? (m.memory_used_bytes / m.memory_total_bytes) * 100 : 0);
   const memLevel = $derived(severity(memPct));
+  const range = (w: CurrentWork) => `${unitWord(t, unitOf(w.runner), 2)} ${w.frame_start}–${w.frame_end}`;
 </script>
 
 <tr style:--c={color}>
@@ -29,7 +32,7 @@
       {#each node.info.runners as runner (runner)}
         <span class="chip">{runner}</span>
       {/each}
-      <span class="muted" title="{node.info.os} · {node.info.arch} · {node.info.cpu_cores} cores"
+      <span class="muted" title="{node.info.os} · {node.info.arch} · {t('count.core', { count: node.info.cpu_cores })}"
         >{node.info.os} · {node.info.arch}</span
       >
     </div>
@@ -44,17 +47,17 @@
           <circle cx="8" cy="8" r="4.5" fill="none" stroke="currentColor" stroke-width="2" />
         {/if}
       </svg>
-      {work.length > 0 ? 'Working' : 'Idle'}
+      {work.length > 0 ? t('node.working') : t('node.idle')}
     </span>
   </td>
   <td class="work">
     {#each work as w (w.task_id)}
       <div class="task">
-        <span class="what">Job {w.job_id + 1} · {unitWord(w.runner, 2)} {w.frame_start}–{w.frame_end}</span>
+        <span class="what">{t('job.name', { id: w.job_id + 1 })} · {range(w)}</span>
         <div
           class="track"
           role="progressbar"
-          aria-label="{unitWord(w.runner, 2)} {w.frame_start}–{w.frame_end} on {name}"
+          aria-label={t('node.progress', { range: range(w), name })}
           aria-valuemin="0"
           aria-valuemax="100"
           aria-valuenow={Math.round(w.fraction * 100)}
@@ -69,22 +72,22 @@
   </td>
   {#if m}
     <td class="num cpu">
-      <span class="label">CPU</span>
+      <span class="label">{t('col.cpu')}</span>
       {formatPercent(m.cpu_percent)}
     </td>
-    <td class="num mem" title="{formatBytes(m.memory_used_bytes)} of {formatBytes(m.memory_total_bytes)}">
-      <span class="label">Memory</span>
+    <td class="num mem" title={t('node.memoryOf', { used: formatBytes(m.memory_used_bytes), total: formatBytes(m.memory_total_bytes) })}>
+      <span class="label">{t('col.memory')}</span>
       {#if memLevel !== 'ok'}
         <!-- Severity is icon + word, never colour alone. -->
         <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" class={memLevel} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M8 2.2l6.2 11H1.8z" /><path d="M8 6.8v3M8 11.8v.1" />
         </svg>
-        <span class="sev">{memLevel === 'critical' ? 'Critical' : 'High'}</span>
+        <span class="sev">{memLevel === 'critical' ? t('mem.critical') : t('mem.high')}</span>
       {/if}
       {formatPercent(memPct)}
     </td>
   {:else}
-    <td class="num waiting muted" colspan="2">Waiting for the first report…</td>
+    <td class="num waiting muted" colspan="2">{t('node.waitingReport')}</td>
   {/if}
 </tr>
 

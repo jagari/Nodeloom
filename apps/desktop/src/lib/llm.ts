@@ -1,3 +1,4 @@
+import type { Translate, UnitName } from './i18n';
 import type { NodeView, RunnerKind, TaskPayload } from './types';
 
 /**
@@ -49,11 +50,11 @@ export function parsePrompts(text: string): string[] {
 }
 
 /** Why these prompts cannot be sent, or '' when they can. */
-export function promptProblem(prompts: string[]): string {
-  if (prompts.length === 0) return 'Write at least one question, one per line.';
-  if (prompts.length > MAX_PROMPTS) return `At most ${MAX_PROMPTS} questions.`;
+export function promptProblem(prompts: string[], t: Translate): string {
+  if (prompts.length === 0) return t('prompt.none');
+  if (prompts.length > MAX_PROMPTS) return t('prompt.tooMany', { max: MAX_PROMPTS });
   const long = prompts.findIndex((p) => p.length > MAX_PROMPT_CHARS);
-  if (long >= 0) return `Question ${long + 1} is longer than ${MAX_PROMPT_CHARS} characters.`;
+  if (long >= 0) return t('prompt.tooLong', { n: long + 1, max: MAX_PROMPT_CHARS });
   return '';
 }
 
@@ -61,8 +62,7 @@ export function llmJob(model: string, prompts: string[]): TaskPayload {
   return { runner: 'llm', model, prompts, frame_start: 1, frame_end: prompts.length };
 }
 
-/** What a job's units are called on screen. */
-export function unitWord(runner: RunnerKind, count: number): string {
-  const one = runner === 'llm' ? 'question' : 'frame';
-  return count === 1 ? one : `${one}s`;
+/** What a job's units are called on screen: an LLM job's are questions. */
+export function unitOf(runner: RunnerKind): UnitName {
+  return runner === 'llm' ? 'question' : 'frame';
 }

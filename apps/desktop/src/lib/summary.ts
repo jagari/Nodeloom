@@ -1,3 +1,4 @@
+import type { Translate, UnitName } from './i18n';
 import { summarizeJob } from './jobs';
 import type { JobView, SummaryView } from './types';
 
@@ -17,7 +18,7 @@ function isFinal(job: JobView): boolean {
 }
 
 /** Where a summary is, from its newest job. Null when that job is gone. */
-export function summaryProgress(summary: SummaryView, jobs: JobView[]): SummaryProgress | null {
+export function summaryProgress(summary: SummaryView, jobs: JobView[], t: Translate): SummaryProgress | null {
   const lastId = summary.jobs[summary.jobs.length - 1];
   const job = jobs.find((j) => j.job_id === lastId);
   if (!job) return null;
@@ -26,11 +27,11 @@ export function summaryProgress(summary: SummaryView, jobs: JobView[]): SummaryP
   const machines = new Set(job.tasks.map((t) => t.node).filter(Boolean)).size;
   let label: string;
   if (step === 1 && summary.parts > 1) {
-    label = `Summarizing ${summary.parts} parts`;
+    label = t('sumstep.parts', { parts: t('count.part', { count: summary.parts }) });
   } else if (isFinal(job)) {
-    label = 'Writing the final summary';
+    label = t('sumstep.final');
   } else {
-    label = `Combining ${s.totalFrames} groups of summaries`;
+    label = t('sumstep.combine', { groups: t('count.group', { count: s.totalFrames }) });
   }
   return { step, label, done: s.doneFrames, total: s.totalFrames, machines };
 }
@@ -38,17 +39,18 @@ export function summaryProgress(summary: SummaryView, jobs: JobView[]): SummaryP
 export interface JobRole {
   label: string;
   /** What the job's units are: parts, groups of summaries, or the summary. */
-  unit: [singular: string, plural: string];
+  unit: UnitName;
 }
 
 /** What a job does for a summary, for its card in the job list; null if none. */
-export function jobRole(summaries: SummaryView[] | undefined, job: JobView): JobRole | null {
+export function jobRole(summaries: SummaryView[] | undefined, job: JobView, t: Translate): JobRole | null {
   for (const summary of summaries ?? []) {
     const index = summary.jobs.indexOf(job.job_id);
     if (index < 0) continue;
-    if (index === 0 && summary.parts > 1) return { label: `Parts of “${summary.title}”`, unit: ['part', 'parts'] };
-    if (isFinal(job)) return { label: `Final summary of “${summary.title}”`, unit: ['summary', 'summaries'] };
-    return { label: `Combining summaries of “${summary.title}”`, unit: ['group', 'groups'] };
+    const title = summary.title;
+    if (index === 0 && summary.parts > 1) return { label: t('role.parts', { title }), unit: 'part' };
+    if (isFinal(job)) return { label: t('role.final', { title }), unit: 'summary' };
+    return { label: t('role.combine', { title }), unit: 'group' };
   }
   return null;
 }

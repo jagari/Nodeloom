@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { MasterInfo } from '../lib/client';
+  import { t } from '../lib/locale.svelte';
+  import Rich from './Rich.svelte';
 
   interface Props {
     info: MasterInfo | null;
@@ -26,42 +28,46 @@
 </script>
 
 <details class="card add" {open}>
-  <summary><h2>Add a machine</h2></summary>
+  <summary><h2>{t('add.title')}</h2></summary>
   <ol>
-    <li>On the other computer, install Nodeloom (the same installer as this one) and open it.</li>
-    <li>Choose <strong>Join a cluster</strong>. On this network it finds this cluster by itself.</li>
+    <li>{t('add.step1')}</li>
+    <!-- "Join a cluster" and "Enter the address" name buttons in the desktop app's own page, which is English for now. -->
     <li>
-      It appears here under <strong>Waiting for approval</strong> with a 6-digit code. Approve it if the code is the
-      same as on that computer.
+      <Rich text={t('add.step2')}>{#snippet join()}<strong>Join a cluster</strong>{/snippet}</Rich>
+    </li>
+    <li>
+      <Rich text={t('add.step3')}>{#snippet waiting()}<strong>{t('pending.title')}</strong>{/snippet}</Rich>
     </li>
   </ol>
 
-  <h3>Not showing up?</h3>
+  <h3>{t('add.trouble')}</h3>
   <ul>
-    <li>Both computers must be on the same network (not a guest Wi-Fi or a VPN).</li>
+    <li>{t('add.network')}</li>
     <li>
-      On Windows, allow Nodeloom through the firewall when asked, on this computer and the other one. If the network is
-      set to <em>Public</em>, switch it to <em>Private</em>.
+      <Rich text={t('add.firewall')}>
+        {#snippet pub()}<em>{t('add.public')}</em>{/snippet}
+        {#snippet priv()}<em>{t('add.private')}</em>{/snippet}
+      </Rich>
     </li>
     {#if info}
       <li>
         <div class="manual">
-          <span>On the other computer, choose <strong>Enter the address</strong> and type:</span>
+          <span><Rich text={t('add.manual')}>{#snippet enter()}<strong>Enter the address</strong>{/snippet}</Rich></span>
           <span class="copyable">
             <code>{info.join_address}</code>
             <button class="btn small" type="button" onclick={() => copy(info.join_address)}>
-              {copied === info.join_address ? 'Copied' : 'Copy'}
+              {copied === info.join_address ? t('common.copied') : t('common.copy')}
             </button>
           </span>
         </div>
       </li>
       <li>
         <div class="manual">
-          <span>On a Raspberry Pi, Jetson or server (command line):</span>
+          <span>{t('add.cli')}</span>
           <span class="copyable">
             <code>{command}</code>
             <button class="btn small" type="button" onclick={() => copy(command)}>
-              {copied === command ? 'Copied' : 'Copy'}
+              {copied === command ? t('common.copied') : t('common.copy')}
             </button>
           </span>
         </div>
