@@ -2,17 +2,17 @@
   import { onMount } from 'svelte';
   import { ClusterClient, parseEndpoint, type ConnectionStatus, type MasterInfo } from './lib/client';
   import { lookalikes, pairedRows } from './lib/devices';
-  import { updateHistory, type History } from './lib/history';
-  import { nodeSlots, slotColor, workByNode } from './lib/jobs';
+  import { nodeSlots, workByNode } from './lib/jobs';
   import { initialConnection } from './lib/launch';
   import { NO_MOVES, trackMoves, type MoveTracker } from './lib/moves';
   import { displayNames } from './lib/names';
   import type { ClusterSnapshot, NodeId, SubmitSummary, TaskPayload } from './lib/types';
   import AddMachine from './components/AddMachine.svelte';
+  import ClusterMap from './components/ClusterMap.svelte';
   import ConnectForm from './components/ConnectForm.svelte';
   import JobList from './components/JobList.svelte';
   import Kpis from './components/Kpis.svelte';
-  import NodeCard from './components/NodeCard.svelte';
+  import MachineList from './components/MachineList.svelte';
   import PairedDevices from './components/PairedDevices.svelte';
   import PendingDevices from './components/PendingDevices.svelte';
   import SubmitForm from './components/SubmitForm.svelte';
@@ -53,7 +53,6 @@
   let token = $state(launch.token);
   let status = $state<ConnectionStatus>('connecting');
   let snapshot = $state<ClusterSnapshot>(EMPTY);
-  let history = $state<History>({});
   let client = $state<ClusterClient | null>(null);
   let info = $state<MasterInfo | null>(null);
   let moves = $state<MoveTracker>(NO_MOVES);
@@ -66,14 +65,12 @@
     token = nextToken;
     save(HOST_KEY, nextHost);
     save(TOKEN_KEY, nextToken);
-    history = {};
     moves = NO_MOVES;
     snapshot = EMPTY;
     info = null;
     client = new ClusterClient(endpoint, nextToken, {
       onSnapshot(s) {
         snapshot = s;
-        history = updateHistory(history, s);
         moves = trackMoves(moves, s, Date.now());
       },
       onStatus(s) {
@@ -121,6 +118,9 @@
   const work = $derived(workByNode(snapshot));
   const paired = $derived(pairedRows(snapshot.devices, snapshot.nodes));
   const flags = $derived(lookalikes(snapshot.pending, snapshot.devices));
+  // Still setting up: how to add machines goes on top, open. Once there are
+  // two or more and nobody waits, it folds away below the jobs.
+  const onboarding = $derived(snapshot.nodes.length <= 1 || snapshot.pending.length > 0);
 
   function connected(): ClusterClient {
     if (!client) throw new Error('Not connected');
@@ -152,6 +152,7 @@
   <main>
     <header class="top">
       <h1>Nodeloom</h1>
+      <Kpis {snapshot} />
       <div class="conn">
         <span class="state {status}" role="status">
           <span class="dot" aria-hidden="true"></span>{statusText[status]}
@@ -162,37 +163,26 @@
     </header>
 
     <div class="stack" class:stale={status !== 'live'}>
-      {#if snapshot.pending.length > 0}
-        <PendingDevices pending={snapshot.pending} {flags} live={status === 'live'} {approve} {ignore} />
+      {#if onboarding}
+        {#if snapshot.pending.length > 0}
+          <PendingDevices pending={snapshot.pending} {flags} live={status === 'live'} {approve} {ignore} />
+        {/if}
+        <AddMachine {info} open />
       {/if}
 
-      <Kpis {snapshot} />
-
-      <section>
-        <h2>Machines</h2>
-        {#if snapshot.nodes.length === 0}
-          <p class="muted">No machine is online yet. See <strong>Add a machine</strong> below.</p>
-        {:else}
-          <div class="nodes">
-            {#each snapshot.nodes as node (node.info.id)}
-              <NodeCard
-                {node}
-                name={names.get(node.info.id) ?? node.info.hostname}
-                samples={history[node.info.id] ?? []}
-                work={work.get(node.info.id) ?? []}
-                color={slotColor(slots.get(node.info.id))}
-              />
-            {/each}
-          </div>
-        {/if}
-      </section>
+      <!-- Who is in the cluster and what each machine is doing, side by side. -->
+      <div class="overview">
+        <ClusterMap devices={snapshot.devices} nodes={snapshot.nodes} names={jobNames} {slots} {work} {moves} {info} />
+        <MachineList nodes={snapshot.nodes} {names} {work} {slots} />
+      </div>
 
       <SubmitForm nodes={snapshot.nodes} {submit} />
-      <SummaryPanel {snapshot} {summarize} />
       <JobList {snapshot} names={jobNames} {slots} {moves} />
+      <SummaryPanel {snapshot} {summarize} />
 
-      <AddMachine {info} open={snapshot.nodes.length <= 1 && snapshot.pending.length === 0} />
-
+      {#if !onboarding}
+        <AddMachine {info} open={false} />
+      {/if}
       {#if paired.length > 0}
         <PairedDevices rows={paired} live={status === 'live'} {remove} />
       {/if}
@@ -201,26 +191,24 @@
 {/if}
 
 <style>
+  /* Sized for a 1280×720 projector: map, machines, Demo job and the
+     running job fit without scrolling. */
   main {
-    max-width: 1100px;
+    max-width: 1280px;
     margin: 0 auto;
-    padding: 20px 16px 48px;
+    padding: 12px 16px 40px;
   }
   .top {
     display: flex;
     justify-content: space-between;
     align-items: center;
     flex-wrap: wrap;
-    gap: 12px;
-    margin-bottom: 18px;
+    gap: 8px 24px;
+    margin-bottom: 12px;
   }
   h1 {
     margin: 0;
     font-size: 22px;
-  }
-  h2 {
-    margin: 0 0 12px;
-    font-size: 16px;
   }
   .conn {
     display: flex;
@@ -252,16 +240,22 @@
   .stack {
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 12px;
     transition: opacity 0.2s;
   }
   /* Hold the last render, dimmed, while reconnecting: no layout jump. */
   .stack.stale {
     opacity: 0.6;
   }
-  .nodes {
+  .overview {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    grid-template-columns: minmax(0, 520px) minmax(0, 1fr);
     gap: 12px;
+    align-items: stretch;
+  }
+  @media (max-width: 1099px) {
+    .overview {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 </style>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { clampPercent } from '../lib/format';
+  import { clampPercent, severity as severityOf } from '../lib/format';
 
   interface Props {
     /** 0..100 */
@@ -13,7 +13,7 @@
   let { value, label, detail = '', severity = true, height = 8 }: Props = $props();
 
   const pct = $derived(clampPercent(value));
-  const level = $derived(!severity ? 'ok' : pct >= 95 ? 'critical' : pct >= 80 ? 'warning' : 'ok');
+  const level = $derived(severity ? severityOf(pct) : 'ok');
 </script>
 
 <div class="meter">

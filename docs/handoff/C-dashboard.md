@@ -71,3 +71,11 @@
   - Demo job은 Start a job 카드의 큰 버튼. 기존 입력 폼은 "Custom job" 접기 안으로 옮겼다(대본의 대안 경로 그대로 사용 가능).
   - 대시보드 순서를 Machines → Start a job → Jobs → Add a machine으로 바꿔 1280×720에서 작업 카드가 덜 밀리게 했다.
 - 확인 필요: 작업 환경에서 npm 레지스트리가 막혀 `pnpm check/test/build`와 실제 마스터 확인은 로컬에서 해야 한다. 순수 로직 테스트(jobs·moves 19개)는 TypeScript로 따로 돌려 통과했다.
+- 2026-11-03 한 화면 배치(브랜치 `feat/37-dashboard-layout`, Refs #37).
+  - 맨 위 한 줄: 제목 · KPI(Machines online, Pieces running, Average CPU) · 연결 상태. 그 아래 왼쪽 연결도(`ClusterMap.svelte`), 오른쪽 기기 목록(`MachineList.svelte` + 한 줄 행 `NodeRow.svelte`, 옛 `NodeCard`).
+  - 연결도 배치는 `src/lib/topology.ts`의 `mapLayout`(위 줄은 왼→오, 아래 줄은 오→왼으로 시계 방향, 라벨은 바깥쪽). 순서는 `jobs.ts`의 `machineOrder`(= `nodeSlots`와 같은 짝지은 목록 순서)라 기기가 빠져도 자리와 색이 그대로다. 1~8대 겹침 없음을 테스트로 확인.
+  - 이동 배너가 떠 있는 동안 받은 기기의 선을 굵게+펄스(`receivingMachines`), reduced-motion이면 굵게만.
+  - 작업은 최신 1개만 크게(`JobCard.svelte`), 나머지는 "Earlier jobs (N)"로 접음. 이동 배너는 구간 막대 아래로 옮겨 배너가 여러 개여도 막대가 화면 밖으로 밀리지 않게 했다.
+  - 기기가 1대 이하이거나 승인 대기가 있으면 승인 카드와 Add a machine(펼침)이 맨 위, 아니면 접어서 맨 아래. Paired machines도 접음.
+  - 행 안의 CPU 스파크라인은 뺐다(44px로는 안 보이고, 화면 낭독용 표가 표 셀 안에서 가로 스크롤을 만들었다). `Sparkline.svelte` 삭제, `history.ts`는 P1 KPI용으로 남김.
+  - 세로로 쌓는 기준은 1100px 미만(창 1280이면 스크롤바·창 테두리로 뷰포트가 1280보다 조금 좁아질 수 있어서).

@@ -109,17 +109,24 @@ export function workByNode(snapshot: ClusterSnapshot): Map<NodeId, CurrentWork[]
 export const SERIES_SLOTS = 6;
 
 /**
- * A stable colour slot (1-based) per machine, or 0 for "no slot" (shown in
- * a neutral colour, still with its name). Slots follow the paired-device
- * list, which only grows while the master runs, so a machine that leaves
- * does not repaint the others mid-demo. Machines not in that list (rare)
- * take the next free slots in id order.
+ * Every machine in a fixed order: the paired-device list, which only grows
+ * while the master runs, then machines not in it (rare) in id order. Colours
+ * and places on the cluster map both follow it, so a machine that leaves
+ * does not move or repaint the others mid-demo.
  */
-export function nodeSlots(devices: PairedDevice[], online: NodeId[]): Map<NodeId, number> {
+export function machineOrder(devices: PairedDevice[], online: NodeId[]): NodeId[] {
   const order: NodeId[] = devices.map((d) => d.id);
   for (const id of [...online].sort()) if (!order.includes(id)) order.push(id);
+  return order;
+}
+
+/**
+ * A stable colour slot (1-based) per machine in `machineOrder`, or 0 for
+ * "no slot" (shown in a neutral colour, still with its name).
+ */
+export function nodeSlots(devices: PairedDevice[], online: NodeId[]): Map<NodeId, number> {
   const slots = new Map<NodeId, number>();
-  order.forEach((id, i) => slots.set(id, i < SERIES_SLOTS ? i + 1 : 0));
+  machineOrder(devices, online).forEach((id, i) => slots.set(id, i < SERIES_SLOTS ? i + 1 : 0));
   return slots;
 }
 
