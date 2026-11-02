@@ -22,6 +22,14 @@ export function formatPercent(value: number): string {
   return `${Math.round(clampPercent(value))}%`;
 }
 
+export type Severity = 'ok' | 'warning' | 'critical';
+
+/** How full a resource is: "High" from 80 %, "Critical" from 95 %. */
+export function severity(percent: number): Severity {
+  const pct = clampPercent(percent);
+  return pct >= 95 ? 'critical' : pct >= 80 ? 'warning' : 'ok';
+}
+
 /** Seconds ago as "now", "5s ago", "2m ago". */
 export function formatAgo(seconds: number): string {
   if (seconds < 1) return 'now';

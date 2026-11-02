@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampPercent, formatAgo, formatBytes, formatPercent } from './format';
+import { clampPercent, formatAgo, formatBytes, formatPercent, severity } from './format';
 
 describe('formatBytes', () => {
   it('scales units', () => {
@@ -20,6 +20,16 @@ describe('percent', () => {
     expect(clampPercent(-3)).toBe(0);
     expect(clampPercent(Number.NaN)).toBe(0);
     expect(formatPercent(42.6)).toBe('43%');
+  });
+});
+
+describe('severity', () => {
+  it('turns High at 80 % and Critical at 95 %', () => {
+    expect(severity(79.9)).toBe('ok');
+    expect(severity(80)).toBe('warning');
+    expect(severity(94.9)).toBe('warning');
+    expect(severity(95)).toBe('critical');
+    expect(severity(Number.NaN)).toBe('ok');
   });
 });
 
