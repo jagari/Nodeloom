@@ -120,9 +120,8 @@ async fn reconnects_when_the_master_stops_answering() {
             .await
             .expect("timed out waiting for the agent to reconnect");
 
-    let keep_reading = tokio::spawn(async move {
-        while let Some(Ok(_)) = second_socket.next().await {}
-    });
+    let keep_reading =
+        tokio::spawn(async move { while let Some(Ok(_)) = second_socket.next().await {} });
 
     tokio::time::timeout(
         Duration::from_secs(5),
