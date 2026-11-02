@@ -73,22 +73,63 @@
   }
 </script>
 
-<form class="card" {onsubmit}>
-  <div class="demo">
-    <div>
-      <h2>Start a job</h2>
-      <p class="muted">
-        {#if demoBlocked}
-          {demoBlocked}
-        {:else}
-          Demo job: 600 test frames split across {demoMachines} machine{demoMachines === 1 ? '' : 's'}, about {demoSeconds}
-          s. A test that only waits; nothing is rendered.
-        {/if}
-      </p>
+<form class="card start" {onsubmit}>
+  <div class="col">
+    <div class="demo">
+      <div>
+        <h2>Start a job</h2>
+        <p class="muted">
+          {#if demoBlocked}
+            {demoBlocked}
+          {:else}
+            Demo job: 600 test frames split across {demoMachines} machine{demoMachines === 1 ? '' : 's'}, about {demoSeconds}
+            s. A test that only waits; nothing is rendered.
+          {/if}
+        </p>
+      </div>
+      <button class="btn primary big" type="button" disabled={busy || !!demoBlocked} onclick={() => send(DEMO_JOB)}>
+        {busy ? 'Starting…' : 'Demo job'}
+      </button>
     </div>
-    <button class="btn primary big" type="button" disabled={busy || !!demoBlocked} onclick={() => send(DEMO_JOB)}>
-      {busy ? 'Starting…' : 'Demo job'}
-    </button>
+    <details>
+      <summary>Custom job</summary>
+      <div class="grid">
+        <label class="field">
+          <span>Runner</span>
+          <select bind:value={runner} disabled={available.length === 0}>
+            {#each available as r (r)}
+              <option value={r}>{r === 'blender' ? 'Blender render' : 'Test (sleep only)'}</option>
+            {:else}
+              <option>Add a machine first</option>
+            {/each}
+          </select>
+        </label>
+        {#if runner === 'blender'}
+          <label class="field wide">
+            <span>.blend file (relative to each machine’s work folder)</span>
+            <input bind:value={blendFile} required spellcheck="false" />
+          </label>
+        {:else}
+          <label class="field">
+            <span>Milliseconds per frame</span>
+            <input type="number" min="0" bind:value={millis} required />
+          </label>
+        {/if}
+        <label class="field">
+          <span>First frame</span>
+          <input type="number" min="0" bind:value={frameStart} required />
+        </label>
+        <label class="field">
+          <span>Last frame</span>
+          <input type="number" min="0" bind:value={frameEnd} required />
+        </label>
+      </div>
+      <div class="actions">
+        <button class="btn primary" type="submit" disabled={busy || available.length === 0}>
+          {busy ? 'Starting…' : 'Split across machines'}
+        </button>
+      </div>
+    </details>
   </div>
   <div class="demo ai">
     <div class="ai-text">
@@ -108,78 +149,52 @@
         </p>
         <div class="ai-fields">
           <label class="field">
-            <span>Model</span>
+            <!-- The options already say "model · N machines". -->
+            <span class="sr-only">Model</span>
             <select bind:value={model}>
               {#each models as m (m.model)}
                 <option value={m.model}>{m.model} · {m.machines} machine{m.machines === 1 ? '' : 's'}</option>
               {/each}
             </select>
           </label>
-          <details class="questions">
-            <summary>Questions ({prompts.length})</summary>
-            <label class="field">
-              <span>One question per line</span>
-              <textarea rows="8" bind:value={promptText} spellcheck="false"></textarea>
-            </label>
-          </details>
+          <button
+            class="btn primary big"
+            type="button"
+            disabled={busy || !!problem || !model}
+            onclick={() => send(llmJob(model, prompts))}
+          >
+            {busy ? 'Starting…' : 'Ask the AI'}
+          </button>
         </div>
+        <details class="questions">
+          <summary>Questions ({prompts.length})</summary>
+          <label class="field">
+            <span>One question per line</span>
+            <textarea rows="8" bind:value={promptText} spellcheck="false"></textarea>
+          </label>
+        </details>
         {#if problem}<p class="error" role="alert">{problem}</p>{/if}
       {/if}
     </div>
-    {#if models.length > 0}
-      <button
-        class="btn primary big"
-        type="button"
-        disabled={busy || !!problem || !model}
-        onclick={() => send(llmJob(model, prompts))}
-      >
-        {busy ? 'Starting…' : 'Ask the AI'}
-      </button>
-    {/if}
   </div>
-  <details>
-    <summary>Custom job</summary>
-    <div class="grid">
-      <label class="field">
-        <span>Runner</span>
-        <select bind:value={runner} disabled={available.length === 0}>
-          {#each available as r (r)}
-            <option value={r}>{r === 'blender' ? 'Blender render' : 'Test (sleep only)'}</option>
-          {:else}
-            <option>Add a machine first</option>
-          {/each}
-        </select>
-      </label>
-      {#if runner === 'blender'}
-        <label class="field wide">
-          <span>.blend file (relative to each machine’s work folder)</span>
-          <input bind:value={blendFile} required spellcheck="false" />
-        </label>
-      {:else}
-        <label class="field">
-          <span>Milliseconds per frame</span>
-          <input type="number" min="0" bind:value={millis} required />
-        </label>
-      {/if}
-      <label class="field">
-        <span>First frame</span>
-        <input type="number" min="0" bind:value={frameStart} required />
-      </label>
-      <label class="field">
-        <span>Last frame</span>
-        <input type="number" min="0" bind:value={frameEnd} required />
-      </label>
-    </div>
-    <div class="actions">
-      <button class="btn primary" type="submit" disabled={busy || available.length === 0}>
-        {busy ? 'Starting…' : 'Split across machines'}
-      </button>
-    </div>
-  </details>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 </form>
 
 <style>
+  /* Demo and local AI side by side, so the job they start stays on screen. */
+  .start {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 24px;
+  }
+  .start > .error {
+    grid-column: 1 / -1;
+  }
+  @media (max-width: 960px) {
+    .start {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
   h2 {
     margin: 0 0 4px;
     font-size: 16px;
@@ -194,36 +209,44 @@
   .demo p {
     margin: 0;
   }
+  .demo > div {
+    flex: 1 1 220px;
+  }
   .big {
     font-size: 16px;
     padding: 10px 22px;
   }
   .ai {
-    margin-top: 14px;
-    padding-top: 14px;
-    border-top: 1px solid var(--grid);
+    padding-left: 24px;
+    border-left: 1px solid var(--grid);
     align-items: flex-start;
   }
+  @media (max-width: 960px) {
+    .ai {
+      margin-top: 14px;
+      padding: 14px 0 0;
+      border-left: 0;
+      border-top: 1px solid var(--grid);
+    }
+  }
   .ai-text {
-    flex: 1 1 320px;
+    flex: 1 1 240px;
     min-width: 0;
   }
   h3 {
     margin: 0 0 4px;
     font-size: 15px;
   }
+  /* The button sits by the model, so the explanation above keeps one line. */
   .ai-fields {
     display: flex;
     flex-wrap: wrap;
     gap: 12px;
-    margin-top: 10px;
-    align-items: flex-start;
+    margin-top: 8px;
+    align-items: flex-end;
   }
-  .questions {
-    flex: 1 1 260px;
-    margin-top: 0;
-    border-top: 0;
-    padding-top: 0;
+  .ai-fields .field {
+    flex: 1 1 200px;
   }
   .questions summary {
     margin-bottom: 6px;
@@ -251,6 +274,8 @@
   summary {
     cursor: pointer;
     color: var(--ink-2);
+  }
+  details[open] > summary {
     margin-bottom: 10px;
   }
   .grid {

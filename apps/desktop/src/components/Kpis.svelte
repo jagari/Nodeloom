@@ -14,34 +14,43 @@
   );
 </script>
 
-<section class="kpis" aria-label="Cluster summary">
-  <div class="card tile">
-    <div class="label">Machines online</div>
-    <div class="value">{online}</div>
+<!-- One small line next to the title: the map and list below carry the detail. -->
+<dl class="kpis" aria-label="Cluster summary">
+  <div>
+    <dt>Machines online</dt>
+    <dd>{online}</dd>
   </div>
-  <div class="card tile">
-    <div class="label">Tasks running</div>
-    <div class="value">{running}</div>
+  <div>
+    <dt>Pieces running</dt>
+    <dd>{running}</dd>
   </div>
-  <div class="card tile">
-    <div class="label">Average CPU</div>
-    <div class="value">{avgCpu === null ? '–' : formatPercent(avgCpu)}</div>
+  <div>
+    <dt>Average CPU</dt>
+    <dd>{avgCpu === null ? '–' : formatPercent(avgCpu)}</dd>
   </div>
-</section>
+</dl>
 
 <style>
   .kpis {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 20px;
+    margin: 0;
   }
-  .label {
+  .kpis div {
+    display: flex;
+    align-items: baseline;
+    flex-direction: row-reverse;
+    gap: 6px;
+  }
+  dt {
     color: var(--ink-2);
-    font-size: 12px;
+    font-size: 13px;
   }
-  .value {
-    font-size: 28px;
-    font-weight: 600;
-    margin-top: 2px;
+  dd {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
   }
 </style>

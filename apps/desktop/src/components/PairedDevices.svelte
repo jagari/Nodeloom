@@ -32,10 +32,11 @@
   }
 </script>
 
-<section aria-labelledby="paired-title">
-  <h2 id="paired-title">Paired machines</h2>
+<!-- Folded: managing machines is not part of the demo, but stays one click away. -->
+<details class="card paired">
+  <summary><h2>Paired machines ({rows.length})</h2></summary>
   {#if error}<p class="problem" role="alert">{error}</p>{/if}
-  <ul class="card list">
+  <ul class="list">
     {#each rows as row (row.id)}
       <li>
         <!-- Status is icon + label, never color alone. -->
@@ -72,17 +73,21 @@
       {/if}
     {/each}
   </ul>
-</section>
+</details>
 
 <style>
+  summary {
+    cursor: pointer;
+  }
   h2 {
-    margin: 0 0 12px;
+    display: inline;
+    margin: 0;
     font-size: 16px;
   }
   .list {
     list-style: none;
-    margin: 0;
-    padding: 4px 16px;
+    margin: 8px 0 0;
+    padding: 0;
   }
   li {
     display: flex;
@@ -133,7 +138,7 @@
   .problem {
     display: flex;
     gap: 6px;
-    margin: 0 0 8px;
+    margin: 8px 0 0;
   }
   .problem::before {
     content: '✕';
