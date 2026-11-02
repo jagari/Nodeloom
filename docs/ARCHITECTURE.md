@@ -152,7 +152,11 @@ master → agent   Rejected { reason }                    기기가 제거되면
 - `services.rs`: 역할에 맞게 서비스를 시작한다. 반환하는 `Running`을 버리면 서비스가 멈춘다. 포트가 사용 중이면 그 이유를 오류로 돌려준다.
 - `settings.rs`: 역할을 저장한다. 파일이 깨졌으면 역할을 다시 묻는다.
 - `lib.rs`: 창, 트레이, 자동 실행, 중복 실행 방지, 로컬 명령을 다룬다.
-  - 명령: `app_state`, `choose_role`, `set_autostart`, `reset_identity`, `open_dashboard`
+  - 명령: `app_state`, `choose_role`, `set_master_address`, `set_autostart`, `reset_identity`, `open_dashboard`
+  - 재시작하는 명령(`choose_role`, `set_master_address`, `reset_identity`)은 먼저 중복 실행 방지 잠금을 푼다. 메인 스레드에서 `restart`하면 `RunEvent::Exit`이 생략돼 잠금이 남는다. 그러면 윈도우에서 새 프로세스가 종료 중인 프로세스에 넘겨지고 꺼진다.
+  - 창(`main`, 마스터 기기의 `settings`)은 시작할 때 한 번만 만들고 보이기·숨기기만 한다. 윈도우에서 동기 명령이나 이벤트 처리기 안에서 창을 만들면 WebView2가 멈춘다.
+  - 로그: `<로컬 데이터>/nodeloom/logs/desktop.log`(5MB를 넘으면 다음 시작 때 `desktop.old.log`로 옮긴다). 패닉도 기록한다.
+  - 참여 기기는 `settings.json`의 `master`(직접 입력한 `host:port`)가 있으면 탐색 없이 그 주소로 붙는다. 토큰은 보내지 않으므로 대시보드 승인이 필요하다.
   - 명령은 앱 자체 파일에서만 부를 수 있다. 대시보드(원격 페이지)는 부를 수 없다.
 - 에이전트 상태(`nodeloom_agent::AgentStatus`): `searching`, `connecting(last_error)`, `waiting_for_approval(code)`, `joined`. 앱 화면이 1초마다 읽는다.
 - UI는 페이지 출처로 화면을 고른다(`src/lib/app.ts`의 `inDesktopApp`).
@@ -164,6 +168,7 @@ master → agent   Rejected { reason }                    기기가 제거되면
 | 경로 | 설명 |
 |---|---|
 | `GET /api/state` | 전체 스냅샷 `ClusterSnapshot`(연결된 기기, 작업, 승인 대기, 승인된 기기) |
+| `GET /api/info` | 마스터 버전과 다른 기기가 붙을 주소 `join_address`(`ip:port`). 대시보드가 쓴 주소가 루프백이면 이 기기의 LAN 주소를 준다. 기기 추가 안내에 쓴다 |
 | `POST /api/jobs` | `SubmitJob { payload }` 제출. 400 잘못된 작업, 409 실행 가능한 기기 없음 |
 | `POST /api/pending/{public_key}/approve` | 대기 기기 승인. 204, 404 대기 중 아님, 409 ID·키 충돌, 500 저장 실패 |
 | `POST /api/pending/{public_key}/ignore` | 대기 기기 무시. 204, 404 |
