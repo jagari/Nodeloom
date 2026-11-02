@@ -15,9 +15,14 @@ use tracing::{info, warn};
 /// Where Ollama listens by default. Only this machine's own server is used.
 pub const DEFAULT_URL: &str = "http://127.0.0.1:11434";
 
-/// Cap on an answer's length, so a demo stays quick and a dashboard stays
-/// readable; Ollama's `num_predict` counts tokens.
-const MAX_ANSWER_TOKENS: u32 = 200;
+/// Answer length when the job does not say, so a demo stays quick and a
+/// dashboard stays readable; Ollama's `num_predict` counts tokens.
+const DEFAULT_ANSWER_TOKENS: u32 = 200;
+/// Context window asked of Ollama. Its default (2048 to 4096 tokens,
+/// depending on the version) silently cuts the start of a long prompt, such
+/// as a document part, and the model then summarizes half of it. Kept the
+/// same for every prompt so a model is not reloaded between jobs.
+const CONTEXT_TOKENS: u32 = 8192;
 /// The longest answer sent back, in characters.
 const MAX_ANSWER_CHARS: usize = 4000;
 /// A small model on a CPU answers a short prompt in seconds; a cold start
@@ -86,7 +91,12 @@ impl LlmRunner {
         })
     }
 
-    async fn answer(&self, model: &str, prompt: &str) -> Result<String, RunnerError> {
+    async fn answer(
+        &self,
+        model: &str,
+        prompt: &str,
+        max_tokens: u32,
+    ) -> Result<String, RunnerError> {
         let reply = self
             .client
             .post(format!("{}/api/generate", self.base))
@@ -95,7 +105,7 @@ impl LlmRunner {
                 "model": model,
                 "prompt": prompt,
                 "stream": false,
-                "options": { "num_predict": MAX_ANSWER_TOKENS },
+                "options": { "num_predict": max_tokens, "num_ctx": CONTEXT_TOKENS },
             }))
             .send()
             .await
@@ -157,6 +167,7 @@ impl Runner for LlmRunner {
             model,
             frame_start,
             frame_end,
+            max_tokens,
             ..
         } = payload
         else {
@@ -171,7 +182,9 @@ impl Runner for LlmRunner {
             let prompt = payload
                 .prompt(frame)
                 .ok_or_else(|| RunnerError::InvalidTask(format!("no prompt {frame}")))?;
-            let text = self.answer(model, prompt).await?;
+            let text = self
+                .answer(model, prompt, max_tokens.unwrap_or(DEFAULT_ANSWER_TOKENS))
+                .await?;
             // A closed receiver just means nobody is listening any more.
             let _ = outputs.send((frame, text)).await;
             let _ = progress.send(done as u32 + 1).await;
@@ -231,6 +244,8 @@ mod tests {
             prompts: vec!["one".into(), "two".into(), "three".into()],
             frame_start: start,
             frame_end: end,
+            first_prompt: 1,
+            max_tokens: None,
         }
     }
 
@@ -269,7 +284,31 @@ mod tests {
         assert_eq!(counts, vec![1, 2]);
         let body = &asked.lock().unwrap()[0];
         assert_eq!(body["stream"], false);
-        assert_eq!(body["options"]["num_predict"], MAX_ANSWER_TOKENS);
+        assert_eq!(body["options"]["num_predict"], DEFAULT_ANSWER_TOKENS);
+        assert_eq!(body["options"]["num_ctx"], CONTEXT_TOKENS);
+    }
+
+    #[tokio::test]
+    async fn a_piece_answers_its_own_prompts_at_the_length_asked() {
+        let (base, asked) = fake_ollama(&["tiny:1b"]).await;
+        let runner = LlmRunner::detect(&base).await.unwrap();
+        let whole = TaskPayload::Llm {
+            model: "tiny:1b".into(),
+            prompts: vec!["one".into(), "two".into(), "three".into()],
+            frame_start: 1,
+            frame_end: 3,
+            first_prompt: 1,
+            max_tokens: Some(600),
+        };
+        let (progress, _p) = mpsc::channel(8);
+        let (outputs, mut answers) = mpsc::channel(8);
+        runner
+            .run_with_outputs(&whole.with_frames(3, 3), &progress, &outputs)
+            .await
+            .unwrap();
+        drop(outputs);
+        assert_eq!(answers.recv().await, Some((3, "tiny:1b: three".to_owned())));
+        assert_eq!(asked.lock().unwrap()[0]["options"]["num_predict"], 600);
     }
 
     #[tokio::test]

@@ -13,15 +13,22 @@ use nodeloom_core::{
 };
 use nodeloom_proto::{
     ClusterSnapshot, JobId, JobView, MasterMessage, Metrics, NodeId, NodeInfo, NodeView,
-    OutputView, PairedDevice, PendingDevice, RunnerKind, TaskId, TaskPayload, TaskSpec, TaskState,
-    TaskView,
+    OutputView, PairedDevice, PendingDevice, RunnerKind, SummaryId, SummaryState, SummaryView,
+    TaskId, TaskPayload, TaskSpec, TaskState, TaskView,
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use crate::devices::{ApprovedDevice, DeviceStore, Devices, StoreError};
+use crate::{
+    devices::{ApprovedDevice, DeviceStore, Devices, StoreError},
+    summarize::{self, Combine},
+};
 
 /// Jobs kept in memory; the oldest are dropped first.
 const MAX_JOBS: usize = 100;
+/// Summaries kept in memory; the oldest finished ones are dropped first.
+const MAX_SUMMARIES: usize = 20;
+/// Dashboards see this much of each prompt; a document part is long.
+const MAX_PROMPT_VIEW_CHARS: usize = 300;
 
 /// Reason sent to a machine whose key was removed from the cluster. The
 /// desktop app recognizes "was removed from the cluster" to offer pairing again.
@@ -204,12 +211,60 @@ impl TaskEntry {
     }
 }
 
+/// A document being summarized: a job per round, the last one running.
+struct SummaryEntry {
+    title: String,
+    model: String,
+    chars: u32,
+    parts: u32,
+    jobs: Vec<JobId>,
+    /// Whether the last job writes the final summary.
+    last_is_final: bool,
+    state: SummaryState,
+    result: Option<String>,
+    error: Option<String>,
+}
+
+impl SummaryEntry {
+    fn view(&self, id: SummaryId) -> SummaryView {
+        SummaryView {
+            summary_id: id,
+            title: self.title.clone(),
+            model: self.model.clone(),
+            chars: self.chars,
+            parts: self.parts,
+            jobs: self.jobs.clone(),
+            state: self.state,
+            result: self.result.clone(),
+            error: self.error.clone(),
+        }
+    }
+
+    fn fail(&mut self, error: String) {
+        self.state = SummaryState::Failed;
+        self.error = Some(error);
+    }
+}
+
+fn llm_job(model: &str, prompts: Vec<String>, max_tokens: u32) -> TaskPayload {
+    TaskPayload::Llm {
+        model: model.to_owned(),
+        frame_start: 1,
+        frame_end: prompts.len() as u32,
+        prompts,
+        first_prompt: 1,
+        max_tokens: Some(max_tokens),
+    }
+}
+
 #[derive(Default)]
 struct Inner {
     nodes: HashMap<NodeId, NodeConn>,
     jobs: BTreeMap<JobId, Vec<TaskEntry>>,
     next_job: u64,
     next_task: u64,
+    summaries: BTreeMap<SummaryId, SummaryEntry>,
+    next_summary: u64,
     next_generation: u64,
     /// Changed only while holding `Cluster::store`, so saves never race.
     devices: Devices,
@@ -220,6 +275,148 @@ struct Inner {
 }
 
 impl Inner {
+    /// How many connected machines can run `template`, or why none can.
+    fn capable(&self, template: &TaskPayload) -> Result<usize, SubmitError> {
+        let kind = template.kind();
+        let capable = self
+            .nodes
+            .values()
+            .filter(|n| can_run(&n.info, template))
+            .count();
+        if capable > 0 {
+            return Ok(capable);
+        }
+        Err(match template.llm_model() {
+            Some(model) if self.nodes.values().any(|n| n.info.runners.contains(&kind)) => {
+                SubmitError::NoMachineWithModel(model.to_owned())
+            }
+            _ => SubmitError::NoCapableNodes(kind),
+        })
+    }
+
+    /// Splits `template` into `pieces` tasks (at least one) and queues
+    /// them; `dispatch` hands them out.
+    fn create_job(&mut self, template: &TaskPayload, pieces: usize) -> JobId {
+        let (start, end) = template.frames();
+        let job_id = JobId(self.next_job);
+        self.next_job += 1;
+        let mut tasks = Vec::new();
+        for (from, to) in split_frames(start, end, pieces.max(1)) {
+            let task_id = TaskId(self.next_task);
+            self.next_task += 1;
+            tasks.push(TaskEntry {
+                spec: TaskSpec {
+                    job_id,
+                    task_id,
+                    payload: template.with_frames(from, to),
+                },
+                node: None,
+                frames_done: 0,
+                state: TaskState::Pending,
+                error: None,
+                outputs: BTreeMap::new(),
+            });
+        }
+        self.jobs.insert(job_id, tasks);
+        self.prune();
+        job_id
+    }
+
+    /// Moves every summary whose round just finished on to its next round,
+    /// its result, or its failure. Called whenever a task finishes.
+    fn advance_summaries(&mut self) {
+        let running: Vec<SummaryId> = self
+            .summaries
+            .iter()
+            .filter(|(_, s)| s.state == SummaryState::Running)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in running {
+            let Some(summary) = self.summaries.get(&id) else {
+                continue;
+            };
+            let last = *summary.jobs.last().expect("a summary starts with a job");
+            let Some(tasks) = self.jobs.get(&last) else {
+                let summary = self.summaries.get_mut(&id).expect("listed above");
+                summary.fail("its job was dropped".into());
+                continue;
+            };
+            if let Some(failed) = tasks.iter().find(|t| t.state == TaskState::Failed) {
+                let error = failed
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "a part failed".into());
+                let summary = self.summaries.get_mut(&id).expect("listed above");
+                summary.fail(error);
+                continue;
+            }
+            if !tasks.iter().all(|t| t.state == TaskState::Done) {
+                continue;
+            }
+            // Answers in document order; a missing or empty one is skipped.
+            let mut answers: Vec<(u32, String)> = tasks
+                .iter()
+                .flat_map(|t| t.outputs.iter().map(|(f, (_, text))| (*f, text.clone())))
+                .filter(|(_, text)| !text.trim().is_empty())
+                .collect();
+            answers.sort_by_key(|(frame, _)| *frame);
+            let answers: Vec<String> = answers.into_iter().map(|(_, text)| text).collect();
+
+            let summary = self.summaries.get(&id).expect("listed above");
+            let (title, model, last_is_final) = (
+                summary.title.clone(),
+                summary.model.clone(),
+                summary.last_is_final,
+            );
+            if answers.is_empty() {
+                let summary = self.summaries.get_mut(&id).expect("listed above");
+                summary.fail("the model answered nothing".into());
+                continue;
+            }
+            if last_is_final {
+                let summary = self.summaries.get_mut(&id).expect("listed above");
+                summary.state = SummaryState::Done;
+                summary.result = Some(answers.join("\n\n"));
+                continue;
+            }
+            let (template, is_final) = match summarize::plan_combine(&title, &answers) {
+                Combine::Final(prompt) => {
+                    (llm_job(&model, vec![prompt], summarize::FINAL_TOKENS), true)
+                }
+                Combine::Round(prompts) => {
+                    (llm_job(&model, prompts, summarize::COMBINE_TOKENS), false)
+                }
+            };
+            if let Err(e) = validate_payload(&template) {
+                let summary = self.summaries.get_mut(&id).expect("listed above");
+                summary.fail(e);
+                continue;
+            }
+            // Machines may have left; the job then waits for one to return.
+            let pieces = self.capable(&template).unwrap_or(1);
+            let job = self.create_job(&template, pieces);
+            let summary = self.summaries.get_mut(&id).expect("listed above");
+            summary.jobs.push(job);
+            summary.last_is_final = is_final;
+        }
+    }
+
+    fn prune_summaries(&mut self) {
+        while self.summaries.len() > MAX_SUMMARIES {
+            let victim = self
+                .summaries
+                .iter()
+                .find(|(_, s)| s.state != SummaryState::Running)
+                .map(|(id, _)| *id);
+            match victim {
+                Some(id) => {
+                    self.summaries.remove(&id);
+                }
+                None => break,
+            }
+        }
+    }
+
     fn requeue_tasks_of(&mut self, node: &NodeId) {
         for task in self.jobs.values_mut().flatten() {
             if task.state == TaskState::Running && task.node.as_ref() == Some(node) {
@@ -662,6 +859,8 @@ impl Cluster {
         if let Some(task) = inner.running_task_mut(node, task_id) {
             task.state = TaskState::Done;
             task.frames_done = task.spec.payload.frame_count();
+            inner.advance_summaries();
+            inner.dispatch();
         }
         drop(inner);
         self.notify();
@@ -672,6 +871,7 @@ impl Cluster {
         if let Some(task) = inner.running_task_mut(node, task_id) {
             task.state = TaskState::Failed;
             task.error = Some(error);
+            inner.advance_summaries();
         }
         drop(inner);
         self.notify();
@@ -681,49 +881,62 @@ impl Cluster {
     /// it and dispatches the pieces.
     pub fn submit_job(&self, template: TaskPayload) -> Result<JobView, SubmitError> {
         validate_payload(&template).map_err(SubmitError::Invalid)?;
-        let kind = template.kind();
+        let mut inner = self.lock();
+        let capable = inner.capable(&template)?;
+        let job_id = inner.create_job(&template, capable);
+        inner.dispatch();
+        let view = job_view(job_id, &inner.jobs[&job_id]);
+        drop(inner);
+        self.notify();
+        Ok(view)
+    }
+
+    /// Starts summarizing `text` with `model`: its parts are summarized
+    /// across the machines that have the model, then combined.
+    pub fn submit_summary(
+        &self,
+        model: &str,
+        title: &str,
+        text: &str,
+    ) -> Result<SummaryView, SubmitError> {
+        let title = summarize::clean_title(title);
+        let parts = summarize::split_document(text).map_err(SubmitError::Invalid)?;
+        let total = parts.len();
+        let (template, is_final) = if total == 1 {
+            let prompt = summarize::whole_prompt(&title, &parts[0]);
+            (llm_job(model, vec![prompt], summarize::FINAL_TOKENS), true)
+        } else {
+            let prompts = parts
+                .iter()
+                .enumerate()
+                .map(|(i, part)| summarize::part_prompt(&title, i + 1, total, part))
+                .collect();
+            (llm_job(model, prompts, summarize::PART_TOKENS), false)
+        };
+        validate_payload(&template).map_err(SubmitError::Invalid)?;
 
         let mut inner = self.lock();
-        let capable = inner
-            .nodes
-            .values()
-            .filter(|n| can_run(&n.info, &template))
-            .count();
-        if capable == 0 {
-            return Err(match template.llm_model() {
-                Some(model) if inner.nodes.values().any(|n| n.info.runners.contains(&kind)) => {
-                    SubmitError::NoMachineWithModel(model.to_owned())
-                }
-                _ => SubmitError::NoCapableNodes(kind),
-            });
-        }
-
-        let (start, end) = template.frames();
-        let job_id = JobId(inner.next_job);
-        inner.next_job += 1;
-
-        let mut tasks = Vec::new();
-        for (from, to) in split_frames(start, end, capable) {
-            let task_id = TaskId(inner.next_task);
-            inner.next_task += 1;
-            tasks.push(TaskEntry {
-                spec: TaskSpec {
-                    job_id,
-                    task_id,
-                    payload: template.with_frames(from, to),
-                },
-                node: None,
-                frames_done: 0,
-                state: TaskState::Pending,
+        let capable = inner.capable(&template)?;
+        let job = inner.create_job(&template, capable);
+        let id = SummaryId(inner.next_summary);
+        inner.next_summary += 1;
+        inner.summaries.insert(
+            id,
+            SummaryEntry {
+                title,
+                model: model.to_owned(),
+                chars: text.chars().count() as u32,
+                parts: total as u32,
+                jobs: vec![job],
+                last_is_final: is_final,
+                state: SummaryState::Running,
+                result: None,
                 error: None,
-                outputs: BTreeMap::new(),
-            });
-        }
-        inner.jobs.insert(job_id, tasks);
-        inner.prune();
+            },
+        );
+        inner.prune_summaries();
         inner.dispatch();
-
-        let view = job_view(job_id, &inner.jobs[&job_id]);
+        let view = inner.summaries[&id].view(id);
         drop(inner);
         self.notify();
         Ok(view)
@@ -771,11 +984,13 @@ impl Cluster {
                 name: d.name.clone(),
             })
             .collect();
+        let summaries = inner.summaries.iter().map(|(id, s)| s.view(*id)).collect();
         ClusterSnapshot {
             nodes,
             jobs,
             pending: pending.into_iter().map(|(_, p)| p).collect(),
             devices,
+            summaries,
         }
     }
 }
@@ -812,6 +1027,15 @@ fn add_device(devices: &mut Devices, info: &NodeInfo, public_key: &str) -> Resul
     Ok(())
 }
 
+fn shorten(text: &str) -> String {
+    if text.chars().count() <= MAX_PROMPT_VIEW_CHARS {
+        return text.to_owned();
+    }
+    let mut short: String = text.chars().take(MAX_PROMPT_VIEW_CHARS - 1).collect();
+    short.push('…');
+    short
+}
+
 fn job_view(job_id: JobId, tasks: &[TaskEntry]) -> JobView {
     let mut outputs: Vec<OutputView> = tasks
         .iter()
@@ -819,7 +1043,7 @@ fn job_view(job_id: JobId, tasks: &[TaskEntry]) -> JobView {
             t.outputs.iter().map(|(frame, (node, text))| OutputView {
                 frame: *frame,
                 node: node.clone(),
-                prompt: t.spec.payload.prompt(*frame).unwrap_or_default().to_owned(),
+                prompt: shorten(t.spec.payload.prompt(*frame).unwrap_or_default()),
                 text: text.clone(),
             })
         })
@@ -898,6 +1122,8 @@ mod tests {
             prompts: (1..=n).map(|i| format!("q{i}")).collect(),
             frame_start: 1,
             frame_end: n,
+            first_prompt: 1,
+            max_tokens: None,
         }
     }
 
@@ -920,6 +1146,8 @@ mod tests {
             prompts: vec!["q".into()],
             frame_start: 1,
             frame_end: 1,
+            first_prompt: 1,
+            max_tokens: None,
         };
         let err = cluster.submit_job(missing).unwrap_err();
         assert!(matches!(err, SubmitError::NoMachineWithModel(_)));
@@ -949,6 +1177,189 @@ mod tests {
         // The machine leaves: its piece starts over elsewhere, answers too.
         cluster.unregister_node(&a, generation);
         assert!(cluster.snapshot().jobs[0].outputs.is_empty());
+    }
+
+    /// Answers every task in `specs` as machine `node`: each prompt's
+    /// answer is "S(<first 20 characters of the prompt>)".
+    fn answer_all(cluster: &Cluster, node: &str, specs: &[TaskSpec]) {
+        let node = NodeId(node.into());
+        for spec in specs {
+            let (start, end) = spec.payload.frames();
+            for frame in start..=end {
+                let prompt: String = spec
+                    .payload
+                    .prompt(frame)
+                    .unwrap()
+                    .chars()
+                    .take(20)
+                    .collect();
+                cluster.task_output(&node, spec.task_id, frame, format!("S({prompt})"));
+            }
+            cluster.task_done(&node, spec.task_id);
+        }
+    }
+
+    fn long_text(sentences: usize) -> String {
+        (0..sentences)
+            .map(|i| format!("Sentence {i} of a long report about distributed computing."))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[test]
+    fn a_long_document_is_summarized_in_parts_then_combined() {
+        let cluster = Cluster::new("t");
+        let (_, mut a) = connect_llm(&cluster, "a", &["tiny:1b"]);
+        let (_, mut b) = connect_llm(&cluster, "b", &["tiny:1b"]);
+        let text = long_text(300); // about 18,000 characters
+        let view = cluster
+            .submit_summary("tiny:1b", "report.pdf", &text)
+            .unwrap();
+        assert!(view.parts >= 5, "{}", view.parts);
+        assert_eq!(view.state, SummaryState::Running);
+        assert_eq!(view.jobs.len(), 1);
+
+        // The parts are shared by both machines, each piece with its own text.
+        let (pa, pb) = (assigned(&mut a), assigned(&mut b));
+        assert_eq!((pa.len(), pb.len()), (1, 1));
+        let TaskPayload::Llm {
+            prompts,
+            max_tokens,
+            first_prompt,
+            ..
+        } = &pb[0].payload
+        else {
+            panic!()
+        };
+        assert!(*first_prompt > 1);
+        assert_eq!(*max_tokens, Some(summarize::PART_TOKENS));
+        assert!(prompts[0].starts_with(&format!("Below is part {first_prompt} of {}", view.parts)));
+        assert!(prompts[0].contains("report.pdf"));
+        // The dashboard sees a short version of each long prompt.
+        answer_all(&cluster, "a", &pa);
+        let snap = cluster.snapshot();
+        assert!(snap.jobs[0].outputs[0].prompt.chars().count() <= MAX_PROMPT_VIEW_CHARS);
+        assert_eq!(snap.summaries[0].state, SummaryState::Running);
+        assert_eq!(snap.summaries[0].jobs.len(), 1, "waits for every part");
+
+        // The last part done: one machine writes the final summary from the
+        // part summaries, in document order.
+        answer_all(&cluster, "b", &pb);
+        let snap = cluster.snapshot();
+        assert_eq!(snap.summaries[0].jobs.len(), 2);
+        let finals: Vec<TaskSpec> = assigned(&mut a)
+            .into_iter()
+            .chain(assigned(&mut b))
+            .collect();
+        assert_eq!(finals.len(), 1);
+        let TaskPayload::Llm {
+            prompts,
+            max_tokens,
+            ..
+        } = &finals[0].payload
+        else {
+            panic!()
+        };
+        assert_eq!(*max_tokens, Some(summarize::FINAL_TOKENS));
+        let first = prompts[0].find("[1]\nS(Below is part 1 of").unwrap();
+        let second = prompts[0].find("[2]\nS(Below is part 2 of").unwrap();
+        assert!(first < second);
+
+        let node = finals[0].clone();
+        let runner = if snap.jobs[1].tasks[0].node == Some(NodeId("a".into())) {
+            "a"
+        } else {
+            "b"
+        };
+        cluster.task_output(
+            &NodeId(runner.into()),
+            node.task_id,
+            1,
+            "The whole report.".into(),
+        );
+        cluster.task_done(&NodeId(runner.into()), node.task_id);
+        let summary = &cluster.snapshot().summaries[0];
+        assert_eq!(summary.state, SummaryState::Done);
+        assert_eq!(summary.result.as_deref(), Some("The whole report."));
+        assert_eq!(summary.title, "report.pdf");
+        assert_eq!(summary.chars as usize, text.chars().count());
+    }
+
+    #[test]
+    fn a_short_document_is_summarized_in_one_go() {
+        let cluster = Cluster::new("t");
+        let (_, mut a) = connect_llm(&cluster, "a", &["tiny:1b"]);
+        let view = cluster
+            .submit_summary("tiny:1b", "memo", "짧은 메모. 두 문장.")
+            .unwrap();
+        assert_eq!(view.parts, 1);
+        let specs = assigned(&mut a);
+        assert!(
+            specs[0]
+                .payload
+                .prompt(1)
+                .unwrap()
+                .starts_with("Summarize the document \"memo\"")
+        );
+        answer_all(&cluster, "a", &specs);
+        let summary = &cluster.snapshot().summaries[0];
+        assert_eq!(summary.state, SummaryState::Done);
+        assert_eq!(summary.jobs.len(), 1);
+    }
+
+    #[test]
+    fn a_failed_part_fails_the_summary_and_bad_requests_are_refused() {
+        let cluster = Cluster::new("t");
+        assert!(matches!(
+            cluster.submit_summary("tiny:1b", "x", &long_text(10)),
+            Err(SubmitError::NoCapableNodes(RunnerKind::Llm))
+        ));
+        let (_, mut a) = connect_llm(&cluster, "a", &["tiny:1b"]);
+        assert!(matches!(
+            cluster.submit_summary("other:7b", "x", &long_text(10)),
+            Err(SubmitError::NoMachineWithModel(_))
+        ));
+        assert!(matches!(
+            cluster.submit_summary("tiny:1b", "x", "  \n "),
+            Err(SubmitError::Invalid(_))
+        ));
+        assert!(matches!(
+            cluster.submit_summary("bad model", "x", &long_text(10)),
+            Err(SubmitError::Invalid(_))
+        ));
+        assert!(cluster.snapshot().summaries.is_empty());
+
+        cluster
+            .submit_summary("tiny:1b", "x", &long_text(300))
+            .unwrap();
+        let task = assigned(&mut a).remove(0).task_id;
+        cluster.task_failed(&NodeId("a".into()), task, "Ollama: out of memory".into());
+        let summary = &cluster.snapshot().summaries[0];
+        assert_eq!(summary.state, SummaryState::Failed);
+        assert_eq!(summary.error.as_deref(), Some("Ollama: out of memory"));
+    }
+
+    #[test]
+    fn a_round_waits_for_a_machine_when_all_left() {
+        let cluster = Cluster::new("t");
+        let (generation, mut a) = connect_llm(&cluster, "a", &["tiny:1b"]);
+        cluster
+            .submit_summary("tiny:1b", "x", &long_text(300))
+            .unwrap();
+        let specs = assigned(&mut a);
+        // The final round is queued when the parts finish; with the only
+        // machine gone right after, it waits for one to come back.
+        answer_all(&cluster, "a", &specs);
+        cluster.unregister_node(&NodeId("a".into()), generation);
+        let snap = cluster.snapshot();
+        assert_eq!(snap.summaries[0].jobs.len(), 2);
+        assert_eq!(snap.summaries[0].state, SummaryState::Running);
+        let (_, mut back) = connect_llm(&cluster, "a", &["tiny:1b"]);
+        assert_eq!(
+            assigned(&mut back).len(),
+            1,
+            "the final round starts on return"
+        );
     }
 
     fn assigned(rx: &mut mpsc::UnboundedReceiver<MasterMessage>) -> Vec<TaskSpec> {

@@ -84,14 +84,24 @@ pub enum TaskPayload {
         frame_end: u32,
     },
     /// Asks a local LLM each prompt in `frame_start..=frame_end`; "frames"
-    /// are 1-based prompt numbers, so a job splits like a render. Every
-    /// piece carries the whole list, which is small (see validation).
+    /// are 1-based prompt numbers, so a job splits like a render.
+    /// `prompts[0]` is prompt number `first_prompt`: a piece carries only
+    /// its own prompts, since a document's parts can be long.
     Llm {
         model: String,
         prompts: Vec<String>,
         frame_start: u32,
         frame_end: u32,
+        #[serde(default = "first_prompt_default")]
+        first_prompt: u32,
+        /// Longest answer in tokens; the runner's default when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_tokens: Option<u32>,
     },
+}
+
+fn first_prompt_default() -> u32 {
+    1
 }
 
 impl TaskPayload {
@@ -114,8 +124,12 @@ impl TaskPayload {
     /// The prompt for `frame`, for an LLM task.
     pub fn prompt(&self, frame: u32) -> Option<&str> {
         match self {
-            TaskPayload::Llm { prompts, .. } => frame
-                .checked_sub(1)
+            TaskPayload::Llm {
+                prompts,
+                first_prompt,
+                ..
+            } => frame
+                .checked_sub(*first_prompt)
                 .and_then(|i| prompts.get(i as usize))
                 .map(String::as_str),
             _ => None,
@@ -144,7 +158,23 @@ impl TaskPayload {
     }
 
     /// Copy of this payload restricted to the inclusive range `start..=end`.
+    /// An LLM piece keeps only the prompts of that range.
     pub fn with_frames(&self, start: u32, end: u32) -> TaskPayload {
+        if let TaskPayload::Llm {
+            model, max_tokens, ..
+        } = self
+        {
+            return TaskPayload::Llm {
+                model: model.clone(),
+                prompts: (start..=end)
+                    .map_while(|frame| self.prompt(frame).map(str::to_owned))
+                    .collect(),
+                frame_start: start,
+                frame_end: end,
+                first_prompt: start,
+                max_tokens: *max_tokens,
+            };
+        }
         let mut copy = self.clone();
         match &mut copy {
             TaskPayload::Fake {
@@ -323,6 +353,48 @@ pub struct ClusterSnapshot {
     pub jobs: Vec<JobView>,
     pub pending: Vec<PendingDevice>,
     pub devices: Vec<PairedDevice>,
+    /// Long-document summaries, oldest first.
+    #[serde(default)]
+    pub summaries: Vec<SummaryView>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SummaryId(pub u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryState {
+    Running,
+    Done,
+    Failed,
+}
+
+/// A long document summarized in stages: its parts are summarized across
+/// machines as one LLM job, then those summaries are combined (in more
+/// jobs if they are still long) into one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SummaryView {
+    pub summary_id: SummaryId,
+    pub title: String,
+    pub model: String,
+    /// Characters in the document.
+    pub chars: u32,
+    /// Parts the document was cut into.
+    pub parts: u32,
+    /// The jobs so far, one per stage; the first summarizes the parts.
+    pub jobs: Vec<JobId>,
+    pub state: SummaryState,
+    pub result: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Request body for summarizing a long text across the machines.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubmitSummary {
+    pub model: String,
+    /// Shown in the dashboard and given to the model, e.g. a file name.
+    pub title: String,
+    pub text: String,
 }
 
 /// Request body for creating a job through the master's HTTP API.
@@ -404,17 +476,46 @@ mod tests {
             prompts: vec!["a".into(), "b".into(), "c".into()],
             frame_start: 1,
             frame_end: 3,
+            first_prompt: 1,
+            max_tokens: Some(50),
         };
         assert_eq!(p.kind(), RunnerKind::Llm);
         assert_eq!(p.llm_model(), Some("llama3.2:1b"));
         let piece = p.with_frames(2, 3);
         assert_eq!(piece.frames(), (2, 3));
         assert_eq!(piece.prompt(2), Some("b"));
+        assert_eq!(piece.prompt(3), Some("c"));
+        assert_eq!(piece.prompt(1), None, "not this piece's prompt");
         assert_eq!(piece.prompt(0), None);
         assert_eq!(piece.prompt(4), None);
+        let TaskPayload::Llm {
+            prompts,
+            first_prompt,
+            max_tokens,
+            ..
+        } = &piece
+        else {
+            unreachable!()
+        };
+        assert_eq!(prompts, &["b".to_owned(), "c".to_owned()], "only its share");
+        assert_eq!((*first_prompt, *max_tokens), (2, Some(50)));
+        // A piece of a piece still lines up.
+        assert_eq!(piece.with_frames(3, 3).prompt(3), Some("c"));
         let json = serde_json::to_string(&piece).unwrap();
         assert!(json.contains(r#""runner":"llm""#));
         assert_eq!(serde_json::from_str::<TaskPayload>(&json).unwrap(), piece);
+    }
+
+    #[test]
+    fn older_llm_payloads_start_at_prompt_one() {
+        let json =
+            r#"{"runner":"llm","model":"m","prompts":["a","b"],"frame_start":1,"frame_end":2}"#;
+        let p: TaskPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(p.prompt(1), Some("a"));
+        assert!(!serde_json::to_string(&p).unwrap().contains("max_tokens"));
+        let snap: ClusterSnapshot =
+            serde_json::from_str(r#"{"nodes":[],"jobs":[],"pending":[],"devices":[]}"#).unwrap();
+        assert!(snap.summaries.is_empty());
     }
 
     #[test]

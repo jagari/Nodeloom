@@ -2,6 +2,7 @@
 //!
 //! * `GET    /api/state`                       full [`ClusterSnapshot`]
 //! * `POST   /api/jobs`                        submit a [`SubmitJob`]
+//! * `POST   /api/summaries`                   summarize a long text ([`SubmitSummary`])
 //! * `POST   /api/pending/{public_key}/approve` let a waiting machine in
 //! * `POST   /api/pending/{public_key}/ignore`  refuse it until restart
 //! * `DELETE /api/devices/{node_id}`            remove a paired machine for good
@@ -41,7 +42,7 @@ use nodeloom_core::{
 };
 use nodeloom_proto::{
     AgentMessage, ClusterSnapshot, DEFAULT_PORT, JobView, MasterMessage, NodeId, NodeInfo,
-    PROTOCOL_VERSION, SubmitJob,
+    PROTOCOL_VERSION, SubmitJob, SubmitSummary, SummaryView,
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -61,12 +62,19 @@ const MAX_WS_MESSAGE: usize = 1 << 20;
 /// not a well-behaved agent, and is refused before it is parsed.
 const MAX_HANDSHAKE_MESSAGE: usize = 8 << 10;
 const UI_PUSH_DELAY: Duration = Duration::from_millis(100);
+/// A document to summarize is the one large request: 200,000 characters of
+/// Korean are 600 KB as UTF-8, more with JSON escapes.
+const MAX_SUMMARY_BODY: usize = 2 << 20;
 
 pub fn router(cluster: Arc<Cluster>) -> Router {
     Router::new()
         .route("/api/state", get(get_state))
         .route("/api/info", get(get_info))
         .route("/api/jobs", post(post_job))
+        .route(
+            "/api/summaries",
+            post(post_summary).layer(DefaultBodyLimit::max(MAX_SUMMARY_BODY)),
+        )
         .route("/api/pending/{public_key}/approve", post(approve_pending))
         .route("/api/pending/{public_key}/ignore", post(ignore_pending))
         .route("/api/devices/{node_id}", delete(remove_device))
@@ -170,15 +178,41 @@ async fn post_job(
     if !authorized(&cluster, bearer(&headers)) {
         return Err(unauthorized());
     }
-    cluster.submit_job(request.payload).map(Json).map_err(|e| {
-        let status = match e {
-            SubmitError::Invalid(_) => StatusCode::BAD_REQUEST,
-            SubmitError::NoCapableNodes(_) | SubmitError::NoMachineWithModel(_) => {
-                StatusCode::CONFLICT
-            }
-        };
-        (status, e.to_string())
+    cluster
+        .submit_job(request.payload)
+        .map(Json)
+        .map_err(submit_error)
+}
+
+fn submit_error(e: SubmitError) -> ApiError {
+    let status = match e {
+        SubmitError::Invalid(_) => StatusCode::BAD_REQUEST,
+        SubmitError::NoCapableNodes(_) | SubmitError::NoMachineWithModel(_) => StatusCode::CONFLICT,
+    };
+    (status, e.to_string())
+}
+
+/// The body is read as bytes and parsed only after the token is checked,
+/// so nobody without it gets a large document parsed.
+async fn post_summary(
+    State(cluster): State<Arc<Cluster>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<SummaryView>, ApiError> {
+    if !authorized(&cluster, bearer(&headers)) {
+        return Err(unauthorized());
+    }
+    let request: SubmitSummary = serde_json::from_slice(&body)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid request: {e}")))?;
+    // Splitting a long document takes a moment; keep it off the async
+    // workers that serve every machine.
+    tokio::task::spawn_blocking(move || {
+        cluster.submit_summary(&request.model, &request.title, &request.text)
     })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map(Json)
+    .map_err(submit_error)
 }
 
 fn pair_result(result: Result<Result<(), PairError>, tokio::task::JoinError>) -> Response {
