@@ -3,7 +3,9 @@
   import { ClusterClient, parseEndpoint, type ConnectionStatus, type MasterInfo } from './lib/client';
   import { lookalikes, pairedRows } from './lib/devices';
   import { updateHistory, type History } from './lib/history';
+  import { nodeSlots, slotColor, workByNode } from './lib/jobs';
   import { initialConnection } from './lib/launch';
+  import { NO_MOVES, trackMoves, type MoveTracker } from './lib/moves';
   import { displayNames } from './lib/names';
   import type { ClusterSnapshot, NodeId, TaskPayload } from './lib/types';
   import AddMachine from './components/AddMachine.svelte';
@@ -53,6 +55,7 @@
   let history = $state<History>({});
   let client = $state<ClusterClient | null>(null);
   let info = $state<MasterInfo | null>(null);
+  let moves = $state<MoveTracker>(NO_MOVES);
 
   function start(nextHost: string, nextToken: string) {
     client?.stop();
@@ -63,12 +66,14 @@
     save(HOST_KEY, nextHost);
     save(TOKEN_KEY, nextToken);
     history = {};
+    moves = NO_MOVES;
     snapshot = EMPTY;
     info = null;
     client = new ClusterClient(endpoint, nextToken, {
       onSnapshot(s) {
         snapshot = s;
         history = updateHistory(history, s);
+        moves = trackMoves(moves, s, Date.now());
       },
       onStatus(s) {
         status = s;
@@ -96,10 +101,23 @@
   // and its cleanup would stop the client it just made.
   onMount(() => {
     if (host && token) start(host, token);
-    return () => client?.stop();
+    // Expire "moved" notices even when no snapshot arrives.
+    const tick = setInterval(() => {
+      if (moves.moves.length > 0) moves = trackMoves(moves, snapshot, Date.now());
+    }, 1000);
+    return () => {
+      clearInterval(tick);
+      client?.stop();
+    };
   });
 
   const names = $derived(displayNames(snapshot.nodes.map((n) => n.info)));
+  // Machines that just left still name their pieces in "moved from …".
+  const jobNames = $derived(
+    new Map([...displayNames(snapshot.devices.map((d) => ({ id: d.id, hostname: d.name }))), ...names]),
+  );
+  const slots = $derived(nodeSlots(snapshot.devices, snapshot.nodes.map((n) => n.info.id)));
+  const work = $derived(workByNode(snapshot));
   const paired = $derived(pairedRows(snapshot.devices, snapshot.nodes));
   const flags = $derived(lookalikes(snapshot.pending, snapshot.devices));
 
@@ -155,16 +173,22 @@
         {:else}
           <div class="nodes">
             {#each snapshot.nodes as node (node.info.id)}
-              <NodeCard {node} name={names.get(node.info.id) ?? node.info.hostname} samples={history[node.info.id] ?? []} />
+              <NodeCard
+                {node}
+                name={names.get(node.info.id) ?? node.info.hostname}
+                samples={history[node.info.id] ?? []}
+                work={work.get(node.info.id) ?? []}
+                color={slotColor(slots.get(node.info.id))}
+              />
             {/each}
           </div>
         {/if}
       </section>
 
-      <AddMachine {info} open={snapshot.nodes.length <= 1 && snapshot.pending.length === 0} />
-
       <SubmitForm nodes={snapshot.nodes} {submit} />
-      <JobList {snapshot} />
+      <JobList {snapshot} names={jobNames} {slots} {moves} />
+
+      <AddMachine {info} open={snapshot.nodes.length <= 1 && snapshot.pending.length === 0} />
 
       {#if paired.length > 0}
         <PairedDevices rows={paired} live={status === 'live'} {remove} />
