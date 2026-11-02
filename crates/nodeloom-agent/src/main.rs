@@ -2,8 +2,10 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use nodeloom_agent::{AgentConfig, identity, run_forever};
-use nodeloom_core::{FakeRunner, RunnerSet, discovery};
+use nodeloom_agent::{
+    AgentConfig, find_master_forever, identity, run_forever, run_forever_discovering,
+};
+use nodeloom_core::{FakeRunner, RunnerSet};
 use nodeloom_proto::DEFAULT_PORT;
 use nodeloom_runner_blender::BlenderRunner;
 use tracing::{info, warn};
@@ -53,8 +55,9 @@ struct RunArgs {
     #[arg(long)]
     enable_fake_runner: bool,
 
-    /// Seconds between resource reports.
-    #[arg(long, default_value_t = 1)]
+    /// Seconds between resource reports, 1 to 5. Kept short so the master
+    /// soon notices a machine that went away.
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u64).range(1..=5))]
     metrics_interval: u64,
 }
 
@@ -143,26 +146,47 @@ async fn run(args: RunArgs, state_dir: PathBuf) -> Result<()> {
         runners = runners.with(Arc::new(FakeRunner));
     }
 
-    let master = match args.master {
-        Some(addr) => addr,
-        None => {
-            info!("looking for a master on the local network...");
-            let (ip, port) = discovery::find_master(Duration::from_secs(30)).await?;
-            format!("{ip}:{port}")
+    let metrics_interval = Duration::from_secs(args.metrics_interval);
+    match args.master {
+        Some(master) => {
+            let master_url = agent_url(&master);
+            info!("master: {master_url} (default port {DEFAULT_PORT})");
+            run_forever(AgentConfig {
+                master_url,
+                identity: me,
+                token: args.token,
+                runners,
+                metrics_interval,
+                status: None,
+            })
+            .await
         }
-    };
-    let master_url = format!("ws://{master}/ws/agent");
-    info!("master: {master_url} (default port {DEFAULT_PORT})");
+        // Keeps looking until a master shows up, so an agent started before
+        // the master (say, a Raspberry Pi booted first) still joins, and
+        // looks again if the master stops answering at its old address.
+        None => {
+            let config = AgentConfig {
+                // Replaced by what discovery finds.
+                master_url: String::new(),
+                identity: me,
+                token: args.token,
+                runners,
+                metrics_interval,
+                status: None,
+            };
+            run_forever_discovering(config, || async {
+                let master_url = agent_url(&find_master_forever().await);
+                info!("master: {master_url}");
+                master_url
+            })
+            .await
+        }
+    }
+}
 
-    run_forever(AgentConfig {
-        master_url,
-        identity: me,
-        token: args.token,
-        runners,
-        metrics_interval: Duration::from_secs(args.metrics_interval.max(1)),
-        status: None,
-    })
-    .await
+/// The agent endpoint of the master at `host:port`.
+fn agent_url(master: &str) -> String {
+    format!("ws://{master}/ws/agent")
 }
 
 /// The host part of `host:port`, `[v6]:port` or a bare host.
@@ -190,7 +214,30 @@ fn may_resolve_by_multicast(host: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{host_of, may_resolve_by_multicast};
+    use clap::Parser;
+
+    use super::{Args, agent_url, host_of, may_resolve_by_multicast};
+
+    #[test]
+    fn metrics_interval_is_one_to_five_seconds() {
+        let parse = |value: &str| {
+            Args::try_parse_from(["nodeloom-agent", "--metrics-interval", value])
+                .map(|args| args.run.metrics_interval)
+        };
+        assert_eq!(parse("1").unwrap(), 1);
+        assert_eq!(parse("5").unwrap(), 5);
+        assert!(parse("0").is_err());
+        assert!(parse("6").is_err());
+        assert!(parse("30").is_err());
+    }
+
+    #[test]
+    fn agent_url_points_at_the_agent_endpoint() {
+        assert_eq!(
+            agent_url("192.168.1.5:7878"),
+            "ws://192.168.1.5:7878/ws/agent"
+        );
+    }
 
     #[test]
     fn multicast_names_are_spotted_in_any_spelling() {
