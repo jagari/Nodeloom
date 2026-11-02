@@ -130,6 +130,7 @@ master → agent   Rejected { reason }                    기기가 제거되면
 
 - **작업(job)** 은 프레임 범위 하나다. 제출 시점에 그 작업을 실행할 수 있는 기기 수만큼 연속된 구간의 **태스크(task)** 로 나눈다(`nodeloom_core::split::split_frames`). 실행할 기기가 없으면 409를 돌려준다.
 - 대기 중인 태스크는 실행 중 태스크가 가장 적은 기기에 배정한다.
+- 마스터는 승인된 기기에 `agent_ping_interval`(3초)마다 Ping을 보낸다. 어떤 프레임(Text, Ping, Pong, Binary)이든 받을 때마다 마지막 수신 시각을 갱신하고, `agent_idle_timeout`(10초) 동안 아무것도 오지 않으면 그 기기를 끊는다. 에이전트는 1초마다 Metrics를 보내고 Ping에 Pong하므로 정상 기기는 끊기지 않는다. 전원·와이파이가 갑자기 끊겨도 TCP 시간 초과(수 분)를 기다리지 않는다(#46).
 - 기기가 끊기면 그 기기의 실행 중 태스크를 대기로 되돌리고(진행률 0) 다른 기기에 다시 배정한다. 같은 ID로 다시 접속해도 이전 세션의 태스크는 다시 배정한다.
 - 에이전트는 **자기에게 배정된 태스크만** 진행·완료·실패로 바꿀 수 있다.
 - 메모리에는 최근 작업 100개만 둔다. 끝난 작업부터 지운다. 마스터를 재시작하면 작업 기록은 사라진다(영속 저장 없음).
@@ -142,7 +143,7 @@ master → agent   Rejected { reason }                    기기가 제거되면
 - 페이지 자체에는 인증이 없다. 보여 주는 정보는 모두 토큰이 필요한 API에서 온다.
 - 작업 화면은 새 API 없이 `ClusterSnapshot`만으로 계산한다(#45).
   - 구간 막대: 작업의 프레임 축 위에 조각(`TaskView`)마다 구간을 그리고 맡은 기기별로 색과 이름을 붙인다(`src/lib/jobs.ts`). 색은 짝지은 기기 목록 순서로 정해 한 대가 빠져도 남은 기기 색이 바뀌지 않는다. 7대째부터는 회색과 이름으로 구분한다.
-  - 재배정 표시: 마스터는 끊긴 기기의 조각을 `node: null`로 되돌렸다가 같은 갱신 안에서 다시 나눠 줄 수 있다. 그래서 스냅샷 사이의 `node`만 비교하지 않고, 조각마다 마지막으로 맡았던 기기를 기억해 비교한다(`src/lib/moves.ts`의 `trackMoves`). 기다리는 동안과 다른 기기가 받은 뒤를 각각 10초 보인다.
+  - 재배정 표시: 마스터는 끊긴 기기의 조각을 `node: null`로 되돌렸다가 같은 갱신 안에서 다시 나눠 줄 수 있다. 그래서 스냅샷 사이의 `node`만 비교하지 않고, 조각마다 마지막으로 맡았던 기기를 기억해 비교한다(`src/lib/moves.ts`의 `trackMoves`). 이동 알림은 작업이 도는 동안과 끝난 뒤 10초까지 보이고, 조각의 "moved from" 표시는 작업이 목록에 있는 동안 남는다(#50).
   - Demo job: 테스트 러너, 프레임 1~600, 프레임당 50ms. 테스트 러너가 있는 기기가 없으면 버튼을 끄고 이유를 보인다.
 
 ## 데스크톱 앱 (`apps/desktop/src-tauri`, D16)
@@ -195,6 +196,10 @@ master → agent   Rejected { reason }                    기기가 제거되면
 - `BlenderRunner` (`nodeloom-runner-blender`): Blender를 찾아(맥 앱 경로, 윈도우 기본 설치 경로, PATH) 다음처럼 실행한다.
   `blender --background --disable-autoexec <작업폴더>/<파일> --render-output <작업폴더>/renders/frame_#### --frame-start N --frame-end M --render-anim`
   표준 출력의 `Saved:` 줄 수로 진행률을 계산한다. 결과물은 각 기기의 `renders/`에 남는다(수집 기능 미구현).
+- `LlmRunner` (`nodeloom-runner-llm`, #52): 그 기기의 Ollama(`127.0.0.1:11434`)를 찾아 모델 목록을 마스터에 알린다(`NodeInfo.llm_models`). 작업은 질문 목록이고 "프레임"은 질문 번호라서 렌더처럼 기기들에 나뉜다. 질문마다 스트리밍 없이, 답 길이를 제한해 묻는다. 답은 `TaskDone` 전에 `AgentMessage::TaskOutput`으로 보낸다.
+  - 마스터는 그 모델이 있는 기기에만 조각을 배정한다(없으면 409와 안내). 답은 프레임별로 지금 맡은 기기 것만 보관하고, 조각이 재배정되면 버린다.
+  - 모델 이름은 평범한 식별자만 받고, 질문은 명령이 아니라 데이터로만 다룬다. 질문 200개, 개당 2000자, 전체 48 KiB로 제한한다(`validate`).
+  - 프로토콜에 `RunnerKind::Llm`, `TaskPayload::Llm`, `AgentMessage::TaskOutput`, `JobView.runner`·`outputs`를 추가했다. 새 필드는 기본값이 있어 이전 에이전트도 페어링된다.
 - 새 작업 종류를 추가하는 순서: `TaskPayload` 변형 추가(proto, 이슈에서 합의) → `validate_payload` 규칙 → 러너 구현과 테스트 → 에이전트에 등록 → UI 타입·폼.
 
 ## 보안 모델
