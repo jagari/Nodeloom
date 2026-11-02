@@ -46,6 +46,14 @@ pub struct Settings {
     /// A pending connection that sends nothing (not even a pong) for this
     /// long is dropped, so dead peers do not linger in the list.
     pub pending_idle_timeout: Duration,
+    /// A joined machine that sends nothing for this long is treated as gone
+    /// and its work goes to others. Agents report every second, so silence
+    /// means it lost power or its network; TCP alone would notice only
+    /// after minutes.
+    pub agent_idle_timeout: Duration,
+    /// How often joined machines are pinged. The pongs count as hearing
+    /// from them, and keep idle NAT and Wi-Fi paths open.
+    pub agent_ping_interval: Duration,
 }
 
 impl Default for Settings {
@@ -56,6 +64,8 @@ impl Default for Settings {
             max_ignored: 256,
             ping_interval: Duration::from_secs(15),
             pending_idle_timeout: Duration::from_secs(45),
+            agent_idle_timeout: Duration::from_secs(10),
+            agent_ping_interval: Duration::from_secs(3),
         }
     }
 }

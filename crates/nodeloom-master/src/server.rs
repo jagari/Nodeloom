@@ -359,6 +359,10 @@ async fn agent_session(
             "agent {} ({}, {}) connected",
             node_id, hello.info.hostname, hello.info.arch
         );
+        let settings = cluster.settings();
+        let (idle_limit, ping_every) = (settings.agent_idle_timeout, settings.agent_ping_interval);
+        let mut ping = tokio::time::interval_at(Instant::now() + ping_every, ping_every);
+        let mut last_heard = Instant::now();
         loop {
             tokio::select! {
                 biased;
@@ -369,8 +373,26 @@ async fn agent_session(
                     }
                     break;
                 }
+                // A machine that lost power or its network sends nothing,
+                // not even a close; without this its work would wait for
+                // the operating system to give up on the socket (minutes).
+                _ = tokio::time::sleep_until(last_heard + idle_limit) => {
+                    warn!(
+                        "agent {node_id} silent for {}s; treating it as gone",
+                        idle_limit.as_secs_f32()
+                    );
+                    break;
+                }
+                _ = ping.tick() => {
+                    let sent = tokio::time::timeout(idle_limit, socket.send(Message::Ping(Bytes::new()))).await;
+                    if !matches!(sent, Ok(Ok(()))) {
+                        break;
+                    }
+                }
                 incoming = socket.recv() => match incoming {
-                    Some(Ok(Message::Text(text))) => {
+                    Some(Ok(frame)) if !matches!(frame, Message::Close(_)) => {
+                        last_heard = Instant::now();
+                        let Message::Text(text) = frame else { continue };
                         match serde_json::from_str::<AgentMessage>(text.as_str()) {
                             Ok(msg) => handle_agent_message(&cluster, &node_id, msg),
                             Err(e) => {
@@ -379,8 +401,7 @@ async fn agent_session(
                             }
                         }
                     }
-                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
-                    Some(Ok(_)) => {}
+                    Some(Ok(_)) | None | Some(Err(_)) => break,
                 },
                 outgoing = outbox.recv() => match outgoing {
                     Some(msg) => {
