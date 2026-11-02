@@ -26,7 +26,7 @@
     {@const s = summarizeJob(job)}
     {@const layout = jobSegments(job)}
     {@const jobMoves = movesOfJob(moves, job.job_id)}
-    {@const movedTo = new Map(jobMoves.filter((m) => m.to).map((m) => [m.task_id, m.from] as const))}
+    {@const justMoved = new Set(jobMoves.filter((m) => m.to).map((m) => m.task_id))}
     {@const machines = new Set(job.tasks.map((t) => t.node).filter(Boolean)).size}
     <article class="card job">
       <header>
@@ -73,7 +73,7 @@
           {@const t = seg.task}
           <div
             class="seg {t.state}"
-            class:moved={movedTo.has(t.task_id)}
+            class:moved={justMoved.has(t.task_id)}
             style:left="{seg.left}%"
             style:width="calc({seg.width}% - 3px)"
             style:--c={t.node ? slotColor(slots.get(t.node)) : 'var(--muted)'}
@@ -97,8 +97,8 @@
             <span class="swatch" class:empty={!t.node} style:--c={t.node ? slotColor(slots.get(t.node)) : 'var(--muted)'}></span>
             <span class="who">
               <strong>{nameOf(t.node)}</strong>
-              {#if movedTo.has(t.task_id)}
-                <span class="tag">→ moved from {nameOf(movedTo.get(t.task_id) ?? null)}</span>
+              {#if moves.movedFrom[t.task_id]}
+                <span class="tag">→ moved from {nameOf(moves.movedFrom[t.task_id] ?? null)}</span>
               {/if}
             </span>
             <span class="nums">frames {t.frame_start}–{t.frame_end}</span>

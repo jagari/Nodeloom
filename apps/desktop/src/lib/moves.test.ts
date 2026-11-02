@@ -50,10 +50,31 @@ describe('trackMoves', () => {
     ]);
   });
 
-  it('a notice expires after the notice time', () => {
+  it('a notice stays while the job runs, then for the notice time after it finishes', () => {
     const moved = feed(snap(task(1, 'mac')), snap(task(1, 'pi')));
-    expect(trackMoves(moved, snap(task(1, 'pi')), 2000 + MOVE_NOTICE_MS - 1).moves).toHaveLength(1);
-    expect(trackMoves(moved, snap(task(1, 'pi')), 2000 + MOVE_NOTICE_MS).moves).toHaveLength(0);
+    // Still running long after the move: the presenter has not got to it yet.
+    const running = trackMoves(moved, snap(task(1, 'pi')), 60_000);
+    expect(running.moves).toHaveLength(1);
+
+    const done = trackMoves(running, snap(task(1, 'pi', 'done')), 61_000);
+    expect(done.finishedAt).toEqual({ 7: 61_000 });
+    expect(trackMoves(done, snap(task(1, 'pi', 'done')), 61_000 + MOVE_NOTICE_MS - 1).moves).toHaveLength(1);
+    expect(trackMoves(done, snap(task(1, 'pi', 'done')), 61_000 + MOVE_NOTICE_MS).moves).toHaveLength(0);
+  });
+
+  it('a move seen just as the job finishes still gets the full notice time', () => {
+    const t = trackMoves(feed(snap(task(1, 'mac'))), snap(task(1, 'pi', 'done')), 5000);
+    expect(trackMoves(t, snap(task(1, 'pi', 'done')), 5000 + MOVE_NOTICE_MS - 1).moves).toHaveLength(1);
+  });
+
+  it('remembers where a piece came from after the notice is gone', () => {
+    const moved = feed(snap(task(1, 'mac'), task(2, 'pi')), snap(task(1, 'pi'), task(2, 'pi')));
+    expect(moved.movedFrom).toEqual({ 1: 'mac' });
+    const finished = snap(task(1, 'pi', 'done'), task(2, 'pi', 'done'));
+    const done = trackMoves(moved, finished, 60_000);
+    const later = trackMoves(done, finished, 60_000 + MOVE_NOTICE_MS);
+    expect(later.moves).toEqual([]);
+    expect(later.movedFrom).toEqual({ 1: 'mac' });
   });
 
   it('back on the same machine (it reconnected) is not a move', () => {
@@ -64,7 +85,7 @@ describe('trackMoves', () => {
   it('forgets pieces whose job is gone', () => {
     const moved = feed(snap(task(1, 'mac')), snap(task(1, 'pi')));
     const empty: ClusterSnapshot = { nodes: [], jobs: [], pending: [], devices: [] };
-    expect(trackMoves(moved, empty, 3000)).toEqual({ owners: {}, moves: [] });
+    expect(trackMoves(moved, empty, 3000)).toEqual(NO_MOVES);
   });
 
   it('movesOfJob lists the newest first, only for that job', () => {
