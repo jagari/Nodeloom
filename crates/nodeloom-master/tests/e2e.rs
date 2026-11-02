@@ -654,6 +654,93 @@ async fn silent_pending_connections_are_dropped() {
     reader.abort();
 }
 
+/// Short silence limits for tests, with margins for slow CI machines: real
+/// agents here report every 50 ms.
+fn quick_silence() -> Settings {
+    Settings {
+        agent_idle_timeout: Duration::from_millis(600),
+        agent_ping_interval: Duration::from_millis(150),
+        ..Settings::default()
+    }
+}
+
+#[tokio::test]
+async fn a_machine_that_goes_silent_loses_its_work_to_the_others() {
+    let mut h = start(Cluster::new(TOKEN).with_settings(quick_silence())).await;
+    h.add_agent("steady", TOKEN);
+    // Joins, then sends nothing and reads nothing, like a laptop whose
+    // Wi-Fi went off: the socket stays open, but nobody is there.
+    let (_silent, reply) = h.raw_hello(&identity("silent"), Some(TOKEN)).await;
+    assert_eq!(reply, Some(MasterMessage::Welcome));
+    h.wait_for("2 nodes", |s| s.nodes.len() == 2).await;
+
+    h.post_job(&fake_job(1, 20, 20)).await;
+    let snap = h
+        .wait_for("silent machine dropped and the job done", |s| {
+            s.nodes.len() == 1 && all_done(s)
+        })
+        .await;
+    assert_eq!(snap.nodes[0].info.id.0, "steady");
+    assert!(
+        snap.jobs[0]
+            .tasks
+            .iter()
+            .all(|t| t.node.as_ref().is_some_and(|n| n.0 == "steady"))
+    );
+    // Still paired: a machine that comes back joins without approval.
+    assert_eq!(snap.devices.len(), 2);
+}
+
+#[tokio::test]
+async fn healthy_machines_are_not_dropped_for_being_quiet_between_reports() {
+    let mut h = start(Cluster::new(TOKEN).with_settings(quick_silence())).await;
+    h.add_agent("a", TOKEN);
+    h.wait_for("joined", |s| s.nodes.len() == 1).await;
+    tokio::time::sleep(Duration::from_millis(2000)).await;
+    assert_eq!(h.state().await.nodes.len(), 1);
+}
+
+#[tokio::test]
+async fn a_job_on_five_machines_survives_losing_two() {
+    let mut h = start(Cluster::new(TOKEN).with_settings(quick_silence())).await;
+    let mut agents = Vec::new();
+    for name in ["m1", "m2", "m3", "m4"] {
+        agents.push(h.add_agent(name, TOKEN));
+    }
+    let (_silent, reply) = h.raw_hello(&identity("m5"), Some(TOKEN)).await;
+    assert_eq!(reply, Some(MasterMessage::Welcome));
+    h.wait_for("5 nodes", |s| s.nodes.len() == 5).await;
+
+    h.post_job(&fake_job(1, 200, 15)).await;
+    h.wait_for("work under way", |s| {
+        s.jobs.first().is_some_and(|j| {
+            j.tasks
+                .iter()
+                .filter(|t| t.state == TaskState::Running)
+                .count()
+                >= 4
+        })
+    })
+    .await;
+    // One machine quits outright; m5 has been silent all along.
+    h.tasks[agents[0]].abort();
+
+    let snap = h
+        .wait_for("job finished on the three left", |s| {
+            s.nodes.len() == 3 && all_done(s)
+        })
+        .await;
+    let finishers: std::collections::BTreeSet<_> = snap.jobs[0]
+        .tasks
+        .iter()
+        .filter_map(|t| t.node.as_ref().map(|n| n.0.as_str()))
+        .collect();
+    assert!(
+        finishers.iter().all(|n| ["m2", "m3", "m4"].contains(n)),
+        "{finishers:?}"
+    );
+}
+
 #[tokio::test]
 async fn info_tells_the_dashboard_where_machines_can_join() {
     let h = start_master().await;

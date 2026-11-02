@@ -58,4 +58,10 @@
 
 ## 진행 메모
 
-(작업하면서 여기에 적는다)
+- **P0-1 완료**
+  - `Settings`에 `agent_idle_timeout`(10초)과 `agent_ping_interval`(3초)을 추가했다.
+  - 승인된 세션은 어떤 프레임이든(Text·Ping·Pong) 받을 때마다 마지막 수신 시각을 갱신한다. 10초 동안 아무것도 오지 않으면 끊고 재배정한다.
+  - 테스트: `a_machine_that_goes_silent_loses_its_work_to_the_others`, `healthy_machines_are_not_dropped_for_being_quiet_between_reports`
+  - 시간 제한을 없애면 첫 테스트가 실패하는 것을 확인했다.
+- **P0-2 완료**: `a_job_on_five_machines_survives_losing_two`. 한 대는 종료, 한 대는 처음부터 조용함.
+- 실기기 확인(와이파이 끄기)은 리허설(E)에서 한다.
