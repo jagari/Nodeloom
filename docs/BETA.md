@@ -1,6 +1,6 @@
 # Nodeloom 베타 사용 안내
 
-팀 내부 베타(`v0.1.0-beta.3`)다. 기기 한 대가 클러스터를 운영하고(마스터), 나머지 기기가 거기에 참여한다(에이전트). 변경 내용은 [`CHANGELOG.md`](../CHANGELOG.md)에 있다.
+팀 내부 베타(`v0.1.0-beta.4`)다. 기기 한 대가 클러스터를 운영하고(마스터), 나머지 기기가 거기에 참여한다(에이전트). 변경 내용은 [`CHANGELOG.md`](../CHANGELOG.md)에 있다.
 
 - **PC(맥·윈도우·리눅스)**: 데스크톱 앱을 설치한다. 터미널을 쓰지 않는다.
 - **화면 없는 기기(라즈베리파이·Jetson·서버)**: 명령줄 버전을 설치한다(아래 "명령줄 버전").
@@ -9,15 +9,15 @@
 
 ## 1. 받기
 
-저장소가 비공개라 저장소 접근 권한이 있는 GitHub 계정이 필요하다. 저장소의 Releases에서 `v0.1.0-beta.3`를 열고, 기기에 맞는 파일을 받는다.
+저장소가 비공개라 저장소 접근 권한이 있는 GitHub 계정이 필요하다. 저장소의 Releases에서 `v0.1.0-beta.4`를 열고, 기기에 맞는 파일을 받는다.
 
 | 기기 | 데스크톱 앱 | 명령줄 버전 |
 |---|---|---|
-| macOS (Apple Silicon) | `nodeloom-desktop-0.1.0-beta.3-macos-arm64.dmg` | `nodeloom-0.1.0-beta.3-macos-arm64.tar.gz` |
-| Windows (대부분의 PC) | `nodeloom-desktop-0.1.0-beta.3-windows-x64.exe` | `nodeloom-0.1.0-beta.3-windows-x64.zip` |
-| Windows on ARM (Surface Pro X·Copilot+ PC 등) | `nodeloom-desktop-0.1.0-beta.3-windows-arm64.exe` | `nodeloom-0.1.0-beta.3-windows-arm64.zip` |
-| Linux PC (Ubuntu 22.04 이상, Debian 12 이상) | `nodeloom-desktop-0.1.0-beta.3-linux-x64.deb` | `nodeloom-0.1.0-beta.3-linux-x64.tar.gz` |
-| 라즈베리파이 4·5(64비트 OS), Jetson | (`linux-arm64.deb`, 화면이 있을 때) | `nodeloom-0.1.0-beta.3-linux-arm64.tar.gz` |
+| macOS (Apple Silicon) | `nodeloom-desktop-0.1.0-beta.4-macos-arm64.dmg` | `nodeloom-0.1.0-beta.4-macos-arm64.tar.gz` |
+| Windows (대부분의 PC) | `nodeloom-desktop-0.1.0-beta.4-windows-x64.exe` | `nodeloom-0.1.0-beta.4-windows-x64.zip` |
+| Windows on ARM (Surface Pro X·Copilot+ PC 등) | `nodeloom-desktop-0.1.0-beta.4-windows-arm64.exe` | `nodeloom-0.1.0-beta.4-windows-arm64.zip` |
+| Linux PC (Ubuntu 22.04 이상, Debian 12 이상) | `nodeloom-desktop-0.1.0-beta.4-linux-x64.deb` | `nodeloom-0.1.0-beta.4-linux-x64.tar.gz` |
+| 라즈베리파이 4·5(64비트 OS), Jetson | (`linux-arm64.deb`, 화면이 있을 때) | `nodeloom-0.1.0-beta.4-linux-arm64.tar.gz` |
 
 Intel Mac과 32비트 라즈베리파이 OS용 빌드는 아직 없다.
 
@@ -42,7 +42,7 @@ Intel Mac과 32비트 라즈베리파이 OS용 빌드는 아직 없다.
 **Linux**
 
 ```sh
-sudo apt install ./nodeloom-desktop-0.1.0-beta.3-linux-x64.deb
+sudo apt install ./nodeloom-desktop-0.1.0-beta.4-linux-x64.deb
 ```
 
 앱 목록에서 Nodeloom을 연다. 트레이 아이콘은 Ubuntu 기본 데스크톱에서 보인다. 다른 GNOME 환경은 AppIndicator 확장이 필요할 수 있다.
@@ -80,12 +80,20 @@ sudo apt install ./nodeloom-desktop-0.1.0-beta.3-linux-x64.deb
 
 ## 4. 작업 보내 보기
 
-대시보드의 **Start a job**에서 Runner를 "Test (sleep only)"로 두고 **Split across machines**를 누른다.
+대시보드의 **Start a job**에서 **Demo job**을 누른다. 테스트 작업 600프레임이 연결된 기기들에 나뉘어 처리된다.
 
-- 작업이 연결된 기기 수만큼 나뉘어 처리되고, 진행률이 Jobs에 보인다.
-- 처리 중에 기기 하나를 끄면 그 부분이 다른 기기로 넘어간다.
+- 작업 카드에 기기별 구간 막대와 진행률이 보인다. 기기 카드에는 그 기기가 지금 맡은 구간이 보인다.
+- 처리 중에 기기 하나를 끄거나 와이파이를 끊으면 약 10초 안에 그 부분이 다른 기기로 넘어가고, "Moved to another machine"이 보인다. 넘어간 부분은 처음부터 다시 처리한다.
+- 프레임 수나 프레임당 시간을 바꾸려면 **Custom job**을 펼친다.
 
-베타에는 아직 실제 작업 플러그인이 없다. 데스크톱 앱은 테스트 작업만 받는다.
+**로컬 AI에 질문 나누기 (Ollama)**
+
+1. 질문을 받을 기기마다 [Ollama](https://ollama.com)를 설치하고 모델을 받는다. 예: `ollama pull llama3.2:1b`. 모든 기기에 같은 모델이 있어야 그 기기들에 나뉜다.
+2. 그 기기의 Nodeloom을 다시 시작한다. Ollama가 답하면 자동으로 켜진다.
+3. 대시보드 **Ask the local AI**에서 모델을 고르고, 질문을 한 줄에 하나씩 쓴 뒤 **Ask the AI**를 누른다.
+4. 답이 도착하는 대로 작업 카드에 질문, 답, 답한 기기가 보인다.
+
+질문은 200개, 개당 2000자까지다. 질문과 답은 클러스터 안(마스터와 각 기기의 Ollama)에서만 오가고 인터넷으로 나가지 않는다. 다만 통신이 암호화되지 않으므로 믿을 수 있는 네트워크에서 쓴다.
 
 ## 5. 기기 빼기
 
@@ -105,8 +113,8 @@ sudo apt install ./nodeloom-desktop-0.1.0-beta.3-linux-x64.deb
 macOS·Linux:
 
 ```sh
-tar -xzf nodeloom-0.1.0-beta.3-<기기>.tar.gz
-cd nodeloom-0.1.0-beta.3-<기기>
+tar -xzf nodeloom-0.1.0-beta.4-<기기>.tar.gz
+cd nodeloom-0.1.0-beta.4-<기기>
 ./install.sh
 ```
 
@@ -116,8 +124,8 @@ cd nodeloom-0.1.0-beta.3-<기기>
 Windows (PowerShell):
 
 ```powershell
-Expand-Archive nodeloom-0.1.0-beta.3-windows-x64.zip
-cd nodeloom-0.1.0-beta.3-windows-x64\nodeloom-0.1.0-beta.3-windows-x64
+Expand-Archive nodeloom-0.1.0-beta.4-windows-x64.zip
+cd nodeloom-0.1.0-beta.4-windows-x64\nodeloom-0.1.0-beta.4-windows-x64
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
@@ -139,7 +147,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 | 증상 | 할 일 |
 |---|---|
 | 앱이 "Looking for a master…"에서 멈춤 | 위 "기기 추가하기"의 확인 순서를 따른다. 마지막 방법은 **Enter the address**에 마스터 주소를 넣는 것이다 |
-| 윈도우에서 앱이 안 열리거나 오래 걸림 | beta.3으로 업데이트한다(역할 선택 후 앱이 사라지던 문제와 트레이 Settings 멈춤을 고쳤다). 계속되면 앱 설정 화면에 나오는 로그 파일(`%LOCALAPPDATA%\nodeloom\logs\desktop.log`)을 이슈에 붙인다 |
+| 윈도우에서 앱이 안 열리거나 오래 걸림 | beta.3 이상으로 업데이트한다(역할 선택 후 앱이 사라지던 문제와 트레이 Settings 멈춤을 고쳤다). 계속되면 앱 설정 화면에 나오는 로그 파일(`%LOCALAPPDATA%\nodeloom\logs\desktop.log`)을 이슈에 붙인다 |
 | 앱이 "port 7878 is already in use"로 시작하지 못함 | 같은 기기에서 명령줄 `nodeloom-master`가 돌고 있다. 그것을 끄거나, 앱의 역할을 "Join a cluster"로 바꾼다 |
 | 대시보드가 "Wrong admin token" | 마스터 데이터 폴더의 `admin-token` 값을 넣는다. 잃어버렸으면 마스터를 멈추고 `nodeloom-master --rotate-admin-token`으로 새로 만든다 |
 | 다른 기기에서 대시보드가 열리지 않음 | 마스터 기기의 방화벽이 7878 포트를 막지 않는지 확인한다 |
@@ -149,7 +157,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 ## 알려진 제한
 
 - **통신이 암호화되지 않는다.** 믿을 수 있는 네트워크(집, 연구실)에서만 쓴다. 공용 와이파이에서는 쓰지 않는다.
-- 실제 작업(Whisper 전사 등)과 작업 파일 전송은 아직 없다.
+- Whisper 전사 등 다른 실제 작업과 작업 파일 전송은 아직 없다. 로컬 AI 질문만 된다.
 - GPU 사용률은 아직 보이지 않는다.
 - 데스크톱 앱은 서명하지 않았고, 자동 업데이트가 없다. 새 버전은 다시 받아 설치한다.
 
