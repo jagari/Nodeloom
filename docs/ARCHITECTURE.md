@@ -176,9 +176,10 @@ master → agent   Rejected { reason }                    기기가 제거되면
 
 | 경로 | 설명 |
 |---|---|
-| `GET /api/state` | 전체 스냅샷 `ClusterSnapshot`(연결된 기기, 작업, 승인 대기, 승인된 기기) |
+| `GET /api/state` | 전체 스냅샷 `ClusterSnapshot`(연결된 기기, 작업, 승인 대기, 승인된 기기, 문서 요약) |
 | `GET /api/info` | 마스터 버전과 다른 기기가 붙을 주소 `join_address`(`ip:port`). 대시보드가 쓴 주소가 루프백이면 이 기기의 LAN 주소를 준다. 기기 추가 안내에 쓴다 |
 | `POST /api/jobs` | `SubmitJob { payload }` 제출. 400 잘못된 작업, 409 실행 가능한 기기 없음 |
+| `POST /api/summaries` | `SubmitSummary { model, title, text }`로 긴 글 요약 시작. 토큰을 확인한 뒤에 본문을 읽고, 이 경로만 본문 2 MiB까지 받는다. 400 빈 글·200,000자 초과·잘못된 모델 이름, 409 그 모델이 있는 기기 없음 |
 | `POST /api/pending/{public_key}/approve` | 대기 기기 승인. 204, 404 대기 중 아님, 409 ID·키 충돌, 500 저장 실패 |
 | `POST /api/pending/{public_key}/ignore` | 대기 기기 무시. 204, 404 |
 | `DELETE /api/devices/{node_id}` | 승인된 기기 제거(키 영구 거부). 204, 404, 500 |
@@ -198,6 +199,12 @@ master → agent   Rejected { reason }                    기기가 제거되면
   표준 출력의 `Saved:` 줄 수로 진행률을 계산한다. 결과물은 각 기기의 `renders/`에 남는다(수집 기능 미구현).
 - `LlmRunner` (`nodeloom-runner-llm`, #52): 그 기기의 Ollama(`127.0.0.1:11434`)를 찾아 모델 목록을 마스터에 알린다(`NodeInfo.llm_models`). 작업은 질문 목록이고 "프레임"은 질문 번호라서 렌더처럼 기기들에 나뉜다. 질문마다 스트리밍 없이, 답 길이를 제한해 묻는다. 답은 `TaskDone` 전에 `AgentMessage::TaskOutput`으로 보낸다.
   - 마스터는 그 모델이 있는 기기에만 조각을 배정한다(없으면 409와 안내). 답은 프레임별로 지금 맡은 기기 것만 보관하고, 조각이 재배정되면 버린다.
+  - 각 조각은 자기 몫의 질문만 들고 간다(`first_prompt`가 첫 질문 번호). 답 길이는 작업의 `max_tokens`(없으면 200)이고, 문맥 크기는 늘 8192를 요청한다.
+- 긴 문서 요약(`nodeloom-master/src/summarize.rs`, #53): 새 러너가 아니라 LLM 작업을 이어 붙인다.
+  1. 마스터가 글을 문단·문장 경계에서 약 2,500자 조각으로 자르고, 조각마다 요약 프롬프트를 만든 LLM 작업 하나를 기기들에 나눈다.
+  2. 그 작업이 모두 끝나면(`task_done` 안에서) 조각 요약을 문서 순서로 모은다. 합쳐서 6,000자 이하면 최종 요약 프롬프트 하나를, 넘으면 묶음별 합치기 작업을 만든다. 요약마다 1,500자로 잘라 넣으므로 단계마다 수가 3분의 1 이하로 줄어 반드시 끝난다.
+  3. 최종 요약이 `SummaryView.result`가 된다. 조각 하나라도 실패하면 요약 전체가 실패한다. 기기가 빠진 조각은 일반 작업처럼 다시 배정된다.
+  - 문서는 프롬프트의 데이터일 뿐이다. 각 기기는 자기 Ollama에만 묻고 아무것도 실행하지 않는다. PDF는 대시보드가 읽고, 파일은 마스터로 가지 않는다.
   - 모델 이름은 평범한 식별자만 받고, 질문은 명령이 아니라 데이터로만 다룬다. 질문 200개, 개당 2000자, 전체 48 KiB로 제한한다(`validate`).
   - 프로토콜에 `RunnerKind::Llm`, `TaskPayload::Llm`, `AgentMessage::TaskOutput`, `JobView.runner`·`outputs`를 추가했다. 새 필드는 기본값이 있어 이전 에이전트도 페어링된다.
 - 새 작업 종류를 추가하는 순서: `TaskPayload` 변형 추가(proto, 이슈에서 합의) → `validate_payload` 규칙 → 러너 구현과 테스트 → 에이전트에 등록 → UI 타입·폼.
