@@ -13,7 +13,8 @@ use nodeloom_core::{
 };
 use nodeloom_proto::{
     ClusterSnapshot, JobId, JobView, MasterMessage, Metrics, NodeId, NodeInfo, NodeView,
-    PairedDevice, PendingDevice, RunnerKind, TaskId, TaskPayload, TaskSpec, TaskState, TaskView,
+    OutputView, PairedDevice, PendingDevice, RunnerKind, TaskId, TaskPayload, TaskSpec, TaskState,
+    TaskView,
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -133,6 +134,21 @@ pub enum SubmitError {
     Invalid(String),
     #[error("no connected node can run {0:?} tasks")]
     NoCapableNodes(RunnerKind),
+    #[error("no connected machine has the model {0}; install it there with `ollama pull {0}`")]
+    NoMachineWithModel(String),
+}
+
+/// Longest answer kept per frame; dashboards get every answer of every job
+/// on each update, so one runaway answer must not bloat them.
+const MAX_OUTPUT_CHARS: usize = 4000;
+
+/// Whether the machine described by `info` can run `payload`: it has the
+/// runner, and for an LLM job, the model.
+fn can_run(info: &NodeInfo, payload: &TaskPayload) -> bool {
+    info.runners.contains(&payload.kind())
+        && payload
+            .llm_model()
+            .is_none_or(|model| info.llm_models.iter().any(|m| m == model))
 }
 
 struct NodeConn {
@@ -150,6 +166,9 @@ struct TaskEntry {
     frames_done: u32,
     state: TaskState,
     error: Option<String>,
+    /// What each frame produced (an LLM's answers), from the machine that
+    /// runs the task now.
+    outputs: BTreeMap<u32, (NodeId, String)>,
 }
 
 impl TaskEntry {
@@ -170,6 +189,8 @@ impl TaskEntry {
         self.state = TaskState::Pending;
         self.node = None;
         self.frames_done = 0;
+        // The next machine starts the piece over and answers again.
+        self.outputs.clear();
     }
 }
 
@@ -212,11 +233,10 @@ impl Inner {
             if task.state != TaskState::Pending {
                 continue;
             }
-            let kind = task.spec.payload.kind();
             let Some(target) = self
                 .nodes
                 .values()
-                .filter(|n| n.info.runners.contains(&kind))
+                .filter(|n| can_run(&n.info, &task.spec.payload))
                 .min_by_key(|n| {
                     (
                         load.get(&n.info.id).copied().unwrap_or(0),
@@ -612,6 +632,21 @@ impl Cluster {
         self.notify();
     }
 
+    /// Keeps what `frame` of a task produced, if `node` runs that task and
+    /// the frame is in its range.
+    pub fn task_output(&self, node: &NodeId, task_id: TaskId, frame: u32, text: String) {
+        let mut inner = self.lock();
+        if let Some(task) = inner.running_task_mut(node, task_id) {
+            let (start, end) = task.spec.payload.frames();
+            if (start..=end).contains(&frame) {
+                let text = text.chars().take(MAX_OUTPUT_CHARS).collect();
+                task.outputs.insert(frame, (node.clone(), text));
+            }
+        }
+        drop(inner);
+        self.notify();
+    }
+
     pub fn task_done(&self, node: &NodeId, task_id: TaskId) {
         let mut inner = self.lock();
         if let Some(task) = inner.running_task_mut(node, task_id) {
@@ -642,10 +677,15 @@ impl Cluster {
         let capable = inner
             .nodes
             .values()
-            .filter(|n| n.info.runners.contains(&kind))
+            .filter(|n| can_run(&n.info, &template))
             .count();
         if capable == 0 {
-            return Err(SubmitError::NoCapableNodes(kind));
+            return Err(match template.llm_model() {
+                Some(model) if inner.nodes.values().any(|n| n.info.runners.contains(&kind)) => {
+                    SubmitError::NoMachineWithModel(model.to_owned())
+                }
+                _ => SubmitError::NoCapableNodes(kind),
+            });
         }
 
         let (start, end) = template.frames();
@@ -666,6 +706,7 @@ impl Cluster {
                 frames_done: 0,
                 state: TaskState::Pending,
                 error: None,
+                outputs: BTreeMap::new(),
             });
         }
         inner.jobs.insert(job_id, tasks);
@@ -762,9 +803,25 @@ fn add_device(devices: &mut Devices, info: &NodeInfo, public_key: &str) -> Resul
 }
 
 fn job_view(job_id: JobId, tasks: &[TaskEntry]) -> JobView {
+    let mut outputs: Vec<OutputView> = tasks
+        .iter()
+        .flat_map(|t| {
+            t.outputs.iter().map(|(frame, (node, text))| OutputView {
+                frame: *frame,
+                node: node.clone(),
+                prompt: t.spec.payload.prompt(*frame).unwrap_or_default().to_owned(),
+                text: text.clone(),
+            })
+        })
+        .collect();
+    outputs.sort_by_key(|o| o.frame);
     JobView {
         job_id,
+        runner: tasks
+            .first()
+            .map_or(RunnerKind::Fake, |t| t.spec.payload.kind()),
         tasks: tasks.iter().map(TaskEntry::view).collect(),
+        outputs,
     }
 }
 
@@ -781,6 +838,7 @@ mod tests {
             cpu_cores: 4,
             total_memory_bytes: 1 << 30,
             runners: runners.to_vec(),
+            llm_models: vec![],
         }
     }
 
@@ -807,6 +865,80 @@ mod tests {
         let (tx, rx) = mpsc::unbounded_channel();
         let (kick, _) = oneshot::channel();
         (cluster.admit(info, &key_of(id), tx, kick).unwrap(), rx)
+    }
+
+    fn connect_llm(
+        cluster: &Cluster,
+        id: &str,
+        models: &[&str],
+    ) -> (u64, mpsc::UnboundedReceiver<MasterMessage>) {
+        let info = NodeInfo {
+            llm_models: models.iter().map(|m| (*m).to_owned()).collect(),
+            ..node(id, &[RunnerKind::Llm])
+        };
+        cluster.approve_with_token(&info, &key_of(id)).unwrap();
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (kick, _) = oneshot::channel();
+        (cluster.admit(info, &key_of(id), tx, kick).unwrap(), rx)
+    }
+
+    fn questions(n: u32) -> TaskPayload {
+        TaskPayload::Llm {
+            model: "tiny:1b".into(),
+            prompts: (1..=n).map(|i| format!("q{i}")).collect(),
+            frame_start: 1,
+            frame_end: n,
+        }
+    }
+
+    #[test]
+    fn llm_jobs_go_only_to_machines_with_the_model() {
+        let cluster = Cluster::new("t");
+        let (_, mut with) = connect_llm(&cluster, "with", &["tiny:1b"]);
+        let (_, mut other) = connect_llm(&cluster, "other", &["big:70b"]);
+        let (_, mut plain) = connect(&cluster, "plain", &[RunnerKind::Fake]);
+
+        let job = cluster.submit_job(questions(4)).unwrap();
+        assert_eq!(job.runner, RunnerKind::Llm);
+        assert_eq!(job.tasks.len(), 1, "one capable machine, one piece");
+        assert_eq!(assigned(&mut with).len(), 1);
+        assert!(assigned(&mut other).is_empty());
+        assert!(assigned(&mut plain).is_empty());
+
+        let missing = TaskPayload::Llm {
+            model: "absent:1b".into(),
+            prompts: vec!["q".into()],
+            frame_start: 1,
+            frame_end: 1,
+        };
+        let err = cluster.submit_job(missing).unwrap_err();
+        assert!(matches!(err, SubmitError::NoMachineWithModel(_)));
+        assert!(err.to_string().contains("ollama pull absent:1b"));
+    }
+
+    #[test]
+    fn answers_are_kept_from_the_running_machine_only_and_dropped_on_requeue() {
+        let cluster = Cluster::new("t");
+        let (generation, mut rx) = connect_llm(&cluster, "a", &["tiny:1b"]);
+        cluster.submit_job(questions(3)).unwrap();
+        let task = assigned(&mut rx).remove(0).task_id;
+        let a = NodeId("a".into());
+
+        cluster.task_output(&a, task, 2, "two".into());
+        cluster.task_output(&a, task, 9, "outside the piece".into());
+        cluster.task_output(&NodeId("stranger".into()), task, 1, "not yours".into());
+        cluster.task_output(&a, task, 3, "x".repeat(MAX_OUTPUT_CHARS + 10));
+        let job = &cluster.snapshot().jobs[0];
+        let frames: Vec<u32> = job.outputs.iter().map(|o| o.frame).collect();
+        assert_eq!(frames, vec![2, 3]);
+        assert_eq!(job.outputs[0].prompt, "q2");
+        assert_eq!(job.outputs[0].text, "two");
+        assert_eq!(job.outputs[0].node, a);
+        assert_eq!(job.outputs[1].text.chars().count(), MAX_OUTPUT_CHARS);
+
+        // The machine leaves: its piece starts over elsewhere, answers too.
+        cluster.unregister_node(&a, generation);
+        assert!(cluster.snapshot().jobs[0].outputs.is_empty());
     }
 
     fn assigned(rx: &mut mpsc::UnboundedReceiver<MasterMessage>) -> Vec<TaskSpec> {

@@ -30,6 +30,25 @@ pub trait Runner: Send + Sync {
         payload: &TaskPayload,
         progress: &mpsc::Sender<u32>,
     ) -> Result<(), RunnerError>;
+
+    /// Like [`run`](Runner::run), and also sends what each frame produced,
+    /// as `(frame, text)`, on `outputs`: an LLM's answers. Runners whose
+    /// results stay on the machine (renders) keep this default.
+    async fn run_with_outputs(
+        &self,
+        payload: &TaskPayload,
+        progress: &mpsc::Sender<u32>,
+        outputs: &mpsc::Sender<(u32, String)>,
+    ) -> Result<(), RunnerError> {
+        let _ = outputs;
+        self.run(payload, progress).await
+    }
+
+    /// Models this runner can use, advertised to the master so it only
+    /// sends a job to machines that have its model.
+    fn models(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// The runners available on one node.
@@ -52,6 +71,14 @@ impl RunnerSet {
         let mut kinds: Vec<_> = self.runners.keys().copied().collect();
         kinds.sort_by_key(|k| format!("{k:?}"));
         kinds
+    }
+
+    /// Every model the runners here can use, sorted.
+    pub fn models(&self) -> Vec<String> {
+        let mut models: Vec<String> = self.runners.values().flat_map(|r| r.models()).collect();
+        models.sort();
+        models.dedup();
+        models
     }
 
     pub fn get(&self, kind: RunnerKind) -> Result<Arc<dyn Runner>, RunnerError> {

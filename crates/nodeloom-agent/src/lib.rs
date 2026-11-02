@@ -10,9 +10,9 @@ use futures_util::{SinkExt, StreamExt};
 use nodeloom_core::{
     RunnerSet, discovery,
     metrics::{MetricsCollector, describe_node},
-    validate::validate_payload,
+    validate::{fit_node_info, validate_payload},
 };
-use nodeloom_proto::{AgentMessage, MasterMessage, PROTOCOL_VERSION, TaskId, TaskSpec};
+use nodeloom_proto::{AgentMessage, MasterMessage, NodeInfo, PROTOCOL_VERSION, TaskId, TaskSpec};
 use serde::Serialize;
 use tokio::{
     sync::{mpsc, watch},
@@ -125,6 +125,12 @@ enum TaskEvent {
         task_id: TaskId,
         error: String,
     },
+    /// What one frame produced (an LLM's answer), sent as soon as it exists.
+    Output {
+        task_id: TaskId,
+        frame: u32,
+        text: String,
+    },
 }
 
 /// Connects once and serves until the connection ends. Returns `Ok(())` when
@@ -150,7 +156,10 @@ async fn session(config: &AgentConfig, welcomed: &mut bool) -> Result<()> {
     let hello = AgentMessage::Hello {
         protocol: PROTOCOL_VERSION,
         public_key: identity.key.public_key().as_hex().to_owned(),
-        info: describe_node(identity.node_id.clone(), config.runners.kinds()),
+        info: fit_node_info(NodeInfo {
+            llm_models: config.runners.models(),
+            ..describe_node(identity.node_id.clone(), config.runners.kinds())
+        }),
         token: config.token.clone(),
     };
     sink.send(Message::text(serde_json::to_string(&hello)?))
@@ -239,6 +248,9 @@ async fn session(config: &AgentConfig, welcomed: &mut bool) -> Result<()> {
                     TaskEvent::Failed { task_id, error } => {
                         running.remove(&task_id);
                         AgentMessage::TaskFailed { task_id, error }
+                    }
+                    TaskEvent::Output { task_id, frame, text } => {
+                        AgentMessage::TaskOutput { task_id, frame, text }
                     }
                 };
                 if let Err(e) = send_message(&mut sink, &msg, idle_limit).await {
@@ -437,12 +449,30 @@ fn spawn_task(
                     }
                 }
             };
+            let (output_tx, mut output_rx) = mpsc::channel::<(u32, String)>(16);
+            let forward_outputs = {
+                let events = events.clone();
+                async move {
+                    while let Some((frame, text)) = output_rx.recv().await {
+                        let _ = events
+                            .send(TaskEvent::Output {
+                                task_id,
+                                frame,
+                                text,
+                            })
+                            .await;
+                    }
+                }
+            };
             let run = async {
-                let result = runner.run(&spec.payload, &progress_tx).await;
+                let result = runner
+                    .run_with_outputs(&spec.payload, &progress_tx, &output_tx)
+                    .await;
                 drop(progress_tx);
+                drop(output_tx);
                 result
             };
-            let (result, ()) = tokio::join!(run, forward);
+            let (result, (), ()) = tokio::join!(run, forward, forward_outputs);
             result.map_err(|e| e.to_string())
         }
         .await;

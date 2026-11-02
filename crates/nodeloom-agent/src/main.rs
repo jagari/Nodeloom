@@ -8,6 +8,7 @@ use nodeloom_agent::{
 use nodeloom_core::{FakeRunner, RunnerSet};
 use nodeloom_proto::DEFAULT_PORT;
 use nodeloom_runner_blender::BlenderRunner;
+use nodeloom_runner_llm::{self as llm_runner, LlmRunner};
 use tracing::{info, warn};
 
 #[derive(Parser)]
@@ -141,6 +142,13 @@ async fn run(args: RunArgs, state_dir: PathBuf) -> Result<()> {
             runners = runners.with(Arc::new(blender));
         }
         None => warn!("blender not found; this node cannot render blender tasks"),
+    }
+    match LlmRunner::detect(llm_runner::DEFAULT_URL).await {
+        Some(llm) => runners = runners.with(Arc::new(llm)),
+        None => info!(
+            "no local LLM (Ollama with a model at {}); this node will not take LLM jobs",
+            llm_runner::DEFAULT_URL
+        ),
     }
     if args.enable_fake_runner {
         runners = runners.with(Arc::new(FakeRunner));
