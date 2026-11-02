@@ -64,4 +64,10 @@
 
 ## 진행 메모
 
-(작업하면서 여기에 적는다)
+- 2026-11-02 P0-1~4 구현(브랜치 `feat/37-demo-dashboard`).
+  - 구간 막대·기기별 묶기: `src/lib/jobs.ts`의 `jobSegments`, `workByNode`, `nodeSlots`(색은 짝지은 기기 목록 순서라 한 대가 빠져도 남은 기기 색이 안 바뀐다).
+  - 재배정 감지: `src/lib/moves.ts`의 `trackMoves`. 마스터는 끊긴 기기의 조각을 `node: null`로 되돌렸다가 같은 갱신 안에서 다시 나눠 주므로, 조각마다 마지막 기기를 기억해 비교한다. 기다리는 동안은 "left: … wait for another machine…", 다른 기기가 받으면 "Moved to another machine: … A → B"를 10초 보인다.
+  - 기기 색은 `app.css`의 `--series-1`~`--series-6`(dataviz 기본 팔레트, 라이트·다크 검증 통과). 7대째부터는 회색+이름.
+  - Demo job은 Start a job 카드의 큰 버튼. 기존 입력 폼은 "Custom job" 접기 안으로 옮겼다(대본의 대안 경로 그대로 사용 가능).
+  - 대시보드 순서를 Machines → Start a job → Jobs → Add a machine으로 바꿔 1280×720에서 작업 카드가 덜 밀리게 했다.
+- 확인 필요: 작업 환경에서 npm 레지스트리가 막혀 `pnpm check/test/build`와 실제 마스터 확인은 로컬에서 해야 한다. 순수 로직 테스트(jobs·moves 19개)는 TypeScript로 따로 돌려 통과했다.
