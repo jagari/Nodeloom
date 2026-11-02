@@ -1,9 +1,12 @@
 <script lang="ts">
+  import { unitWord } from '../lib/i18n';
   import { jobSegments, slotColor, summarizeJob } from '../lib/jobs';
-  import { unitWord } from '../lib/llm';
+  import { unitOf } from '../lib/llm';
+  import { t } from '../lib/locale.svelte';
   import { movesOfJob, type MoveTracker } from '../lib/moves';
   import { jobRole } from '../lib/summary';
   import type { JobView, NodeId, SummaryView } from '../lib/types';
+  import Rich from './Rich.svelte';
   import StatusBadge from './StatusBadge.svelte';
 
   interface Props {
@@ -19,27 +22,30 @@
   }
   let { job, newest, summaries, names, slots, moves }: Props = $props();
 
-  const nameOf = (id: NodeId | null) => (id ? (names.get(id) ?? id) : 'No machine yet');
+  const nameOf = (id: NodeId | null) => (id ? (names.get(id) ?? id) : t('job.noMachine'));
   const pct = (fraction: number) => `${Math.round(fraction * 100)}%`;
 
   const s = $derived(summarizeJob(job));
   const layout = $derived(jobSegments(job));
   const jobMoves = $derived(movesOfJob(moves, job.job_id));
   const justMoved = $derived(new Set(jobMoves.filter((m) => m.to).map((m) => m.task_id)));
-  const machines = $derived(new Set(job.tasks.map((t) => t.node).filter(Boolean)).size);
-  const role = $derived(jobRole(summaries, job));
-  const unit = (n: number) => (role ? role.unit[n === 1 ? 0 : 1] : unitWord(job.runner, n));
+  const machines = $derived(new Set(job.tasks.map((task) => task.node).filter(Boolean)).size);
+  const role = $derived(jobRole(summaries, job, t));
+  const unitName = $derived(role ? role.unit : unitOf(job.runner));
+  const unit = (n: number) => unitWord(t, unitName, n);
   const units = $derived(unit(2));
+  const range = (start: number, end: number) => `${units} ${start}–${end}`;
+  const total = $derived(t(`count.${unitName}`, { count: s.totalFrames }));
+  const machineCount = $derived(t('count.machine', { count: machines }));
 </script>
 
 <article class="card job">
   <header>
     <div>
-      <strong>Job {job.job_id + 1}</strong>
+      <strong>{t('job.name', { id: job.job_id + 1 })}</strong>
       {#if role}<span class="role">{role.label}</span>{/if}
       <span class="muted">
-        · {s.totalFrames} {unit(s.totalFrames)} in {job.tasks.length} piece{job.tasks.length === 1 ? '' : 's'} on {machines}
-        machine{machines === 1 ? '' : 's'}
+        · {t('job.meta', { units: total, pieces: t('count.piece', { count: job.tasks.length }), machines: machineCount })}
       </span>
     </div>
     <div class="head-right">
@@ -48,20 +54,24 @@
     </div>
   </header>
 
-  <div class="bar" role="img" aria-label="Job {job.job_id + 1}: {pct(s.fraction)} of {s.totalFrames} {units} done across {machines} machines">
+  <div
+    class="bar"
+    role="img"
+    aria-label={t('job.barLabel', { id: job.job_id + 1, pct: pct(s.fraction), total, machines: machineCount })}
+  >
     {#each layout.segments as seg (seg.task.task_id)}
-      {@const t = seg.task}
+      {@const task = seg.task}
       <div
-        class="seg {t.state}"
-        class:moved={justMoved.has(t.task_id)}
+        class="seg {task.state}"
+        class:moved={justMoved.has(task.task_id)}
         style:left="{seg.left}%"
         style:width="calc({seg.width}% - 3px)"
-        style:--c={t.node ? slotColor(slots.get(t.node)) : 'var(--muted)'}
-        title="{nameOf(t.node)} · {units} {t.frame_start}–{t.frame_end} · {pct(seg.fraction)}"
+        style:--c={task.node ? slotColor(slots.get(task.node)) : 'var(--muted)'}
+        title="{nameOf(task.node)} · {range(task.frame_start, task.frame_end)} · {pct(seg.fraction)}"
       >
         <div class="fill" style:width="{seg.fraction * 100}%"></div>
         {#if seg.width >= 12}
-          <span class="in-label">{nameOf(t.node)}</span>
+          <span class="in-label">{nameOf(task.node)}</span>
         {/if}
       </div>
     {/each}
@@ -83,44 +93,49 @@
           {/if}
         </svg>
         {#if m.to}
+          {@const dest = m.to}
           <span>
-            <strong>Moved to another machine:</strong> {units} {m.frame_start}–{m.frame_end} from
-            <strong>{nameOf(m.from)}</strong> → <strong>{nameOf(m.to)}</strong>
+            <Rich text={t('move.moved', { range: range(m.frame_start, m.frame_end) })}>
+              {#snippet label()}<strong>{t('move.label')}</strong>{/snippet}
+              {#snippet from()}<strong>{nameOf(m.from)}</strong>{/snippet}
+              {#snippet to()}<strong>{nameOf(dest)}</strong>{/snippet}
+            </Rich>
           </span>
         {:else}
           <span>
-            <strong>{nameOf(m.from)} left:</strong> {units} {m.frame_start}–{m.frame_end} wait for another machine…
+            <Rich text={t('move.left', { range: range(m.frame_start, m.frame_end) })}>
+              {#snippet who()}<strong>{t('move.leftWho', { name: nameOf(m.from) })}</strong>{/snippet}
+            </Rich>
           </span>
         {/if}
       </p>
     {/each}
   </div>
 
-
   <ul class="pieces">
     {#each layout.segments as seg (seg.task.task_id)}
-      {@const t = seg.task}
+      {@const task = seg.task}
       <li>
-        <span class="swatch" class:empty={!t.node} style:--c={t.node ? slotColor(slots.get(t.node)) : 'var(--muted)'}></span>
+        <span class="swatch" class:empty={!task.node} style:--c={task.node ? slotColor(slots.get(task.node)) : 'var(--muted)'}></span>
         <span class="who">
-          <strong>{nameOf(t.node)}</strong>
-          {#if moves.movedFrom[t.task_id]}
-            <span class="tag">→ moved from {nameOf(moves.movedFrom[t.task_id] ?? null)}</span>
+          <strong>{nameOf(task.node)}</strong>
+          {#if moves.movedFrom[task.task_id]}
+            <span class="tag">{t('move.from', { name: nameOf(moves.movedFrom[task.task_id] ?? null) })}</span>
           {/if}
         </span>
-        <span class="nums">{units} {t.frame_start}–{t.frame_end}</span>
+        <span class="nums">{range(task.frame_start, task.frame_end)}</span>
         <span class="nums pct">{pct(seg.fraction)}</span>
         <span class="state">
-          <StatusBadge state={t.state} />
-          {#if t.error}<span class="err muted">{t.error}</span>{/if}
+          <StatusBadge state={task.state} />
+          {#if task.error}<span class="err muted">{task.error}</span>{/if}
         </span>
       </li>
     {/each}
   </ul>
 
   {#if job.outputs.length > 0}
-      <details class="answers" open={newest}>
-      <summary>Answers ({job.outputs.length} of {s.totalFrames})</summary>
+    <details class="answers" open={newest}>
+      <summary>{t('job.answers', { done: job.outputs.length, total: s.totalFrames })}</summary>
       <ol>
         {#each job.outputs as o (o.frame)}
           <li>

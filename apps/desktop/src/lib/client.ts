@@ -1,6 +1,8 @@
+import { MessageError } from './i18n';
 import type { ClusterSnapshot, JobView, NodeId, SubmitSummary, SummaryView, TaskPayload } from './types';
 
-const GONE = 'That machine is no longer waiting; it may have disconnected.';
+/** Marks a 404 from a master too old to have the endpoint; never shown. */
+const OLD_MASTER = new Error('old master');
 
 export type ConnectionStatus = 'connecting' | 'live' | 'offline' | 'unauthorized';
 
@@ -82,32 +84,35 @@ export class ClusterClient {
 
   /** Lets a waiting machine in. */
   async approve(publicKey: string): Promise<void> {
-    await this.request('POST', `/api/pending/${encodeURIComponent(publicKey)}/approve`, undefined, GONE);
+    await this.request('POST', `/api/pending/${encodeURIComponent(publicKey)}/approve`, undefined, new MessageError('err.gone'));
   }
 
   /** Refuses a waiting machine until the master restarts. */
   async ignore(publicKey: string): Promise<void> {
-    await this.request('POST', `/api/pending/${encodeURIComponent(publicKey)}/ignore`, undefined, GONE);
+    await this.request('POST', `/api/pending/${encodeURIComponent(publicKey)}/ignore`, undefined, new MessageError('err.gone'));
   }
 
   /** Removes a paired machine for good. */
   async removeDevice(id: NodeId): Promise<void> {
-    await this.request('DELETE', `/api/devices/${encodeURIComponent(id)}`, undefined, 'That machine is not paired.');
+    await this.request('DELETE', `/api/devices/${encodeURIComponent(id)}`, undefined, new MessageError('err.notPaired'));
   }
 
   /** How to reach this master; null from a master too old to say. */
   async info(): Promise<MasterInfo | null> {
     try {
-      const response = await this.request('GET', '/api/info', undefined, 'old master');
+      const response = await this.request('GET', '/api/info', undefined, OLD_MASTER);
       return (await response.json()) as MasterInfo;
     } catch (e) {
-      if (e instanceof Error && e.message === 'old master') return null;
+      if (e === OLD_MASTER) return null;
       throw e;
     }
   }
 
-  /** Sends an authorized request; throws with the master's explanation. */
-  private async request(method: string, path: string, body?: unknown, notFound?: string): Promise<Response> {
+  /**
+   * Sends an authorized request; throws with the master's explanation, or
+   * with a `MessageError` the dashboard words itself.
+   */
+  private async request(method: string, path: string, body?: unknown, notFound?: Error): Promise<Response> {
     const headers: Record<string, string> = { Authorization: `Bearer ${this.token}` };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     const response = await fetch(`${this.endpoint.http}${path}`, {
@@ -116,10 +121,11 @@ export class ClusterClient {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (!response.ok) {
-      if (response.status === 404 && notFound) throw new Error(notFound);
-      if (response.status === 401) throw new Error('The admin token was not accepted.');
+      if (response.status === 404 && notFound) throw notFound;
+      if (response.status === 401) throw new MessageError('err.token');
       const detail = (await response.text()).trim();
-      throw new Error(detail || `master answered ${response.status}`);
+      if (detail) throw new Error(detail);
+      throw new MessageError('err.status', { status: String(response.status) });
     }
     return response;
   }

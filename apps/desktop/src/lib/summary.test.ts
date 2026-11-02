@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { translator } from './i18n';
 import { jobRole, summaryProgress } from './summary';
 import type { JobView, SummaryView } from './types';
+
+const en = translator('en');
 
 function job(job_id: number, pieces: [number, number, number, string | null][]): JobView {
   return {
@@ -37,7 +40,7 @@ describe('summaryProgress', () => {
       [1, 6, 3, 'a'],
       [7, 12, 6, 'b'],
     ]);
-    expect(summaryProgress(summary([4]), [parts])).toEqual({
+    expect(summaryProgress(summary([4]), [parts], en)).toEqual({
       step: 1,
       label: 'Summarizing 12 parts',
       done: 9,
@@ -49,21 +52,21 @@ describe('summaryProgress', () => {
   it('names combining and final rounds, and copes with a missing job', () => {
     const combine = job(5, [[1, 3, 0, 'a']]);
     const last = job(6, [[1, 1, 0, 'b']]);
-    expect(summaryProgress(summary([4, 5]), [combine])?.label).toBe('Combining 3 groups of summaries');
-    expect(summaryProgress(summary([4, 5, 6]), [combine, last])?.label).toBe('Writing the final summary');
-    expect(summaryProgress(summary([4, 9]), [combine])).toBeNull();
+    expect(summaryProgress(summary([4, 5]), [combine], en)?.label).toBe('Combining 3 groups of summaries');
+    expect(summaryProgress(summary([4, 5, 6]), [combine, last], en)?.label).toBe('Writing the final summary');
+    expect(summaryProgress(summary([4, 9]), [combine], en)).toBeNull();
     // A short document goes straight to the final summary.
-    expect(summaryProgress(summary([6], 1), [last])?.label).toBe('Writing the final summary');
+    expect(summaryProgress(summary([6], 1), [last], en)?.label).toBe('Writing the final summary');
   });
 });
 
 describe('jobRole', () => {
   it('labels the jobs of a summary only', () => {
     const s = summary([4, 6]);
-    expect(jobRole([s], job(4, [[1, 12, 0, 'a']]))).toEqual({ label: 'Parts of “report.pdf”', unit: ['part', 'parts'] });
-    expect(jobRole([summary([4, 5, 6])], job(5, [[1, 3, 0, 'a']]))?.unit).toEqual(['group', 'groups']);
-    expect(jobRole([s], job(6, [[1, 1, 0, 'a']]))?.label).toBe('Final summary of “report.pdf”');
-    expect(jobRole([s], job(7, [[1, 1, 0, 'a']]))).toBeNull();
-    expect(jobRole(undefined, job(4, [[1, 1, 0, 'a']]))).toBeNull();
+    expect(jobRole([s], job(4, [[1, 12, 0, 'a']]), en)).toEqual({ label: 'Parts of “report.pdf”', unit: 'part' });
+    expect(jobRole([summary([4, 5, 6])], job(5, [[1, 3, 0, 'a']]), en)?.unit).toBe('group');
+    expect(jobRole([s], job(6, [[1, 1, 0, 'a']]), en)?.label).toBe('Final summary of “report.pdf”');
+    expect(jobRole([s], job(7, [[1, 1, 0, 'a']]), en)).toBeNull();
+    expect(jobRole(undefined, job(4, [[1, 1, 0, 'a']]), en)).toBeNull();
   });
 });

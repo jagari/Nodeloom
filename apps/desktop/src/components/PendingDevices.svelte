@@ -1,6 +1,9 @@
 <script lang="ts">
   import { shownName } from '../lib/devices';
+  import { errorText } from '../lib/i18n';
+  import { t } from '../lib/locale.svelte';
   import type { PendingDevice } from '../lib/types';
+  import Rich from './Rich.svelte';
 
   // Moves focus to the safe choice when a confirmation appears, so keyboard
   // and screen-reader users are not left on a button that just vanished.
@@ -20,7 +23,8 @@
   let busy = $state<string | null>(null);
   /** Request whose approval waits for a second click. */
   let confirming = $state<string | null>(null);
-  let errors = $state<Record<string, string>>({});
+  // Kept as caught, so the text follows a language switch.
+  let errors = $state<Record<string, unknown>>({});
 
   // A two-step button in the card instead of window.confirm(): the macOS
   // webview answers confirm() with false, and the card itself shows which
@@ -32,11 +36,11 @@
     }
     confirming = null;
     busy = request.public_key;
-    errors = { ...errors, [request.public_key]: '' };
+    errors = { ...errors, [request.public_key]: null };
     try {
       await (kind === 'approve' ? approve : ignore)(request.public_key);
     } catch (e) {
-      errors = { ...errors, [request.public_key]: e instanceof Error ? e.message : String(e) };
+      errors = { ...errors, [request.public_key]: e };
     } finally {
       busy = null;
     }
@@ -44,10 +48,11 @@
 </script>
 
 <section aria-labelledby="pending-title">
-  <h2 id="pending-title">Waiting for approval</h2>
+  <h2 id="pending-title">{t('pending.title')}</h2>
   <p class="muted hint">
-    Approve a machine only if it shows the same code. On the machine, the agent prints it at start, or run
-    <code>nodeloom-agent pairing-code</code>.
+    <Rich text={t('pending.hint')}>
+      {#snippet command()}<code>nodeloom-agent pairing-code</code>{/snippet}
+    </Rich>
   </p>
   <div class="list">
     {#each pending as request (request.public_key)}
@@ -60,30 +65,33 @@
             {request.info.os} · {request.info.arch}{request.address ? ` · ${request.address}` : ''}
           </div>
         </div>
-        <div class="code" aria-label="Confirmation code {request.code}">{request.code}</div>
+        <div class="code" aria-label={t('pending.codeLabel', { code: request.code })}>{request.code}</div>
         {#if flag}
           <p class="note warn" role="status">{flag}</p>
         {/if}
         {#if error}
-          <p class="note bad" role="alert">{error}</p>
+          <p class="note bad" role="alert">{errorText(error, t)}</p>
         {/if}
         {#if confirming === request.public_key}
           <p class="note warn" role="status">
-            Approve {shownName(request)} with code {request.code}{request.address ? ` from ${request.address}` : ''}?
-            Check the code on the machine itself first.
+            {t(request.address ? 'pending.confirmFrom' : 'pending.confirm', {
+              name: shownName(request),
+              code: request.code,
+              address: request.address ?? '',
+            })}
           </p>
           <!-- Cancel takes the spot Approve had, so a double click cannot approve. -->
           <div class="actions">
             <button class="btn primary" disabled={!live || busy !== null} onclick={() => act(request, 'approve')}>
-              Approve anyway
+              {t('pending.approveAnyway')}
             </button>
-            <button class="btn" {@attach focus} onclick={() => (confirming = null)}>Cancel</button>
+            <button class="btn" {@attach focus} onclick={() => (confirming = null)}>{t('common.cancel')}</button>
           </div>
         {:else}
           <div class="actions">
-            <button class="btn" disabled={!live || busy !== null} onclick={() => act(request, 'ignore')}>Ignore</button>
+            <button class="btn" disabled={!live || busy !== null} onclick={() => act(request, 'ignore')}>{t('pending.ignore')}</button>
             <button class="btn primary" disabled={!live || busy !== null} onclick={() => act(request, 'approve')}>
-              {busy === request.public_key ? 'Working…' : 'Approve'}
+              {busy === request.public_key ? t('common.working') : t('pending.approve')}
             </button>
           </div>
         {/if}

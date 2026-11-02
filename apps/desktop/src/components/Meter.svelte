@@ -1,5 +1,6 @@
 <script lang="ts">
   import { clampPercent, severity as severityOf } from '../lib/format';
+  import { t } from '../lib/locale.svelte';
 
   interface Props {
     /** 0..100 */
@@ -25,7 +26,7 @@
         <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" class={level} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M8 2.2l6.2 11H1.8z" /><path d="M8 6.8v3M8 11.8v.1" />
         </svg>
-        <span class="sev">{level === 'critical' ? 'Critical' : 'High'}</span>
+        <span class="sev">{level === 'critical' ? t('mem.critical') : t('mem.high')}</span>
       {/if}
       {Math.round(pct)}%
     </span>

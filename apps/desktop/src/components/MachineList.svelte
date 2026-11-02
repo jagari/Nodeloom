@@ -1,7 +1,9 @@
 <script lang="ts">
   import { slotColor, type CurrentWork } from '../lib/jobs';
   import type { NodeId, NodeView } from '../lib/types';
+  import { t } from '../lib/locale.svelte';
   import NodeRow from './NodeRow.svelte';
+  import Rich from './Rich.svelte';
 
   interface Props {
     nodes: NodeView[];
@@ -18,18 +20,22 @@
 </script>
 
 <section class="card machines" aria-labelledby="machines-title">
-  <h2 id="machines-title">Machines <span class="muted">({nodes.length} online)</span></h2>
+  <h2 id="machines-title">{t('machines.title')} <span class="muted">{t('machines.online', { count: nodes.length })}</span></h2>
   {#if nodes.length === 0}
-    <p class="muted">No machine is online yet. See <strong>Add a machine</strong>.</p>
+    <p class="muted">
+      <Rich text={t('machines.none')}>
+        {#snippet add()}<strong>{t('add.title')}</strong>{/snippet}
+      </Rich>
+    </p>
   {:else}
     <table>
       <thead>
         <tr>
-          <th scope="col">Machine</th>
-          <th scope="col">Status</th>
-          <th scope="col">Working on</th>
-          <th scope="col" class="num">CPU</th>
-          <th scope="col" class="num">Memory</th>
+          <th scope="col">{t('col.machine')}</th>
+          <th scope="col">{t('col.status')}</th>
+          <th scope="col">{t('col.work')}</th>
+          <th scope="col" class="num">{t('col.cpu')}</th>
+          <th scope="col" class="num">{t('col.memory')}</th>
         </tr>
       </thead>
       <tbody>

@@ -1,6 +1,8 @@
 // Reading a document's text in the dashboard, so only text (not the file)
 // goes to the master. pdf.js is loaded only when a PDF is opened.
 
+import { MessageError, type Translate } from './i18n';
+
 /** Mirrors `MAX_DOCUMENT_CHARS` in nodeloom-master's summarize.rs. */
 export const MAX_DOCUMENT_CHARS = 200_000;
 /** Mirrors `PART_CHARS`: about how long one part is. */
@@ -43,14 +45,10 @@ export function countChars(text: string): number {
 }
 
 /** Why `text` cannot be summarized, or '' when it can. */
-export function documentProblem(text: string): string {
-  if (text.trim().length === 0) {
-    return 'No text found. A scanned PDF is only pictures of pages; it needs text recognition (OCR) first.';
-  }
+export function documentProblem(text: string, t: Translate): string {
+  if (text.trim().length === 0) return t('doc.empty');
   const chars = countChars(text);
-  if (chars > MAX_DOCUMENT_CHARS) {
-    return `The document has ${chars.toLocaleString('en-US')} characters; at most ${MAX_DOCUMENT_CHARS.toLocaleString('en-US')} can be summarized.`;
-  }
+  if (chars > MAX_DOCUMENT_CHARS) return t('doc.tooLong', { chars, max: MAX_DOCUMENT_CHARS });
   return '';
 }
 
@@ -68,7 +66,7 @@ export interface ReadDocument {
 /** Reads the text of a PDF, or of a plain-text or Markdown file. */
 export async function readDocument(file: File, onPage?: (done: number, total: number) => void): Promise<ReadDocument> {
   if (file.size > MAX_FILE_BYTES) {
-    throw new Error(`The file is larger than ${MAX_FILE_BYTES / 1024 / 1024} MB.`);
+    throw new MessageError('doc.tooBig', { mb: MAX_FILE_BYTES / 1024 / 1024 });
   }
   const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
   if (!isPdf) return { text: await file.text(), pages: null };

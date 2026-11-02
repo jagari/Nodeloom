@@ -1,13 +1,15 @@
 <script lang="ts">
+  import type { MessageKey } from '../lib/i18n';
   import type { JobState } from '../lib/jobs';
+  import { t } from '../lib/locale.svelte';
 
   let { state }: { state: JobState } = $props();
 
-  const labels: Record<JobState, string> = {
-    pending: 'Queued',
-    running: 'Running',
-    done: 'Done',
-    failed: 'Failed',
+  const labels: Record<JobState, MessageKey> = {
+    pending: 'state.pending',
+    running: 'state.running',
+    done: 'state.done',
+    failed: 'state.failed',
   };
 </script>
 
@@ -24,7 +26,7 @@
       <circle cx="8" cy="8" r="5.5" /><path d="M8 5v3.3l2 1.2" />
     {/if}
   </svg>
-  <span class="label">{labels[state]}</span>
+  <span class="label">{t(labels[state])}</span>
 </span>
 
 <style>

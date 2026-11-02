@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { MasterInfo } from '../lib/client';
   import { slotColor, type CurrentWork } from '../lib/jobs';
+  import { t } from '../lib/locale.svelte';
   import type { MoveTracker } from '../lib/moves';
   import {
     MAP_HEIGHT,
@@ -33,13 +34,11 @@
   const m = $derived(layout.master);
 
   const working = $derived(layout.spots.filter((s) => work.has(s.id)).length);
-  const summary = $derived(
-    `Master with ${online.size} of ${layout.spots.length} machines connected, ${working} working.`,
-  );
+  const summary = $derived(t('map.summary', { online: online.size, count: layout.spots.length, working }));
 </script>
 
 <section class="card map" aria-labelledby="map-title">
-  <h2 id="map-title">Cluster</h2>
+  <h2 id="map-title">{t('map.title')}</h2>
   <svg viewBox="0 0 {MAP_WIDTH} {MAP_HEIGHT}" role="img" aria-label={summary}>
     <!-- Links first so the machines and the master sit on top of them. -->
     {#each layout.spots as s (s.id)}
@@ -66,10 +65,10 @@
         rx="10"
       />
       {#if info}
-        <text x={m.x} y={m.y - 3} class="m-name">Master</text>
+        <text x={m.x} y={m.y - 3} class="m-name">{t('map.master')}</text>
         <text x={m.x} y={m.y + 13} class="m-addr">{info.join_address}</text>
       {:else}
-        <text x={m.x} y={m.y + 5} class="m-name">Master</text>
+        <text x={m.x} y={m.y + 5} class="m-name">{t('map.master')}</text>
       {/if}
     </g>
 
@@ -81,7 +80,7 @@
       <!-- Name and work outside the ring: above the top row, below the bottom row. -->
       {@const nameY = s.labelAbove ? s.y - NODE_R - 21 : s.y + NODE_R + 16}
       <g class="node" class:offline={!on} style:--c={slotColor(slots.get(s.id))}>
-        <title>{name}: {on ? workLabel(w) : 'offline'}</title>
+        <title>{name}: {on ? workLabel(w, t) : t('node.offline')}</title>
         {#if on}
           <circle class="track" cx={s.x} cy={s.y} r={NODE_R} />
           {#if w.length > 0}
@@ -101,10 +100,10 @@
           <circle class="gone" cx={s.x} cy={s.y} r={NODE_R - 3} />
         {/if}
         <text x={s.x} y={nameY} class="n-name">{clipName(name, 17)}</text>
-        <text x={s.x} y={nameY + 14} class="n-work">{on ? workLabel(w) : 'offline'}</text>
+        <text x={s.x} y={nameY + 14} class="n-work">{on ? workLabel(w, t) : t('node.offline')}</text>
       </g>
     {:else}
-      <text x={m.x} y={m.y + MASTER_HEIGHT} class="n-work">No machine paired yet</text>
+      <text x={m.x} y={m.y + MASTER_HEIGHT} class="n-work">{t('map.none')}</text>
     {/each}
   </svg>
 </section>

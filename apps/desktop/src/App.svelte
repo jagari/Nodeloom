@@ -5,12 +5,15 @@
   import { nodeSlots, workByNode } from './lib/jobs';
   import { initialConnection } from './lib/launch';
   import { NO_MOVES, trackMoves, type MoveTracker } from './lib/moves';
+  import { MessageError, type MessageKey } from './lib/i18n';
+  import { t } from './lib/locale.svelte';
   import { displayNames } from './lib/names';
   import type { ClusterSnapshot, NodeId, SubmitSummary, TaskPayload } from './lib/types';
   import AddMachine from './components/AddMachine.svelte';
   import ClusterMap from './components/ClusterMap.svelte';
   import ConnectForm from './components/ConnectForm.svelte';
   import JobList from './components/JobList.svelte';
+  import LangSwitch from './components/LangSwitch.svelte';
   import Kpis from './components/Kpis.svelte';
   import MachineList from './components/MachineList.svelte';
   import PairedDevices from './components/PairedDevices.svelte';
@@ -117,13 +120,13 @@
   const slots = $derived(nodeSlots(snapshot.devices, snapshot.nodes.map((n) => n.info.id)));
   const work = $derived(workByNode(snapshot));
   const paired = $derived(pairedRows(snapshot.devices, snapshot.nodes));
-  const flags = $derived(lookalikes(snapshot.pending, snapshot.devices));
+  const flags = $derived(lookalikes(snapshot.pending, snapshot.devices, t));
   // Still setting up: how to add machines goes on top, open. Once there are
   // two or more and nobody waits, it folds away below the jobs.
   const onboarding = $derived(snapshot.nodes.length <= 1 || snapshot.pending.length > 0);
 
   function connected(): ClusterClient {
-    if (!client) throw new Error('Not connected');
+    if (!client) throw new MessageError('err.notConnected');
     return client;
   }
   const submit = (payload: TaskPayload) => connected().submit(payload);
@@ -132,19 +135,20 @@
   const ignore = (key: string) => connected().ignore(key);
   const remove = (id: NodeId) => connected().removeDevice(id);
 
-  const statusText: Record<ConnectionStatus, string> = {
-    connecting: 'Connecting…',
-    live: 'Live',
-    offline: 'Master unreachable, retrying…',
-    unauthorized: 'Wrong admin token',
+  const statusText: Record<ConnectionStatus, MessageKey> = {
+    connecting: 'conn.connecting',
+    live: 'conn.live',
+    offline: 'conn.offline',
+    unauthorized: 'conn.unauthorized',
   };
 </script>
 
 {#if !client || status === 'unauthorized'}
   <main>
+    <div class="lang-top"><LangSwitch /></div>
     <ConnectForm
       initialHost={host}
-      problem={status === 'unauthorized' && client ? statusText.unauthorized : ''}
+      problem={status === 'unauthorized' && client ? t(statusText.unauthorized) : ''}
       connect={start}
     />
   </main>
@@ -155,10 +159,11 @@
       <Kpis {snapshot} />
       <div class="conn">
         <span class="state {status}" role="status">
-          <span class="dot" aria-hidden="true"></span>{statusText[status]}
+          <span class="dot" aria-hidden="true"></span>{t(statusText[status])}
         </span>
         <span class="muted host">{host}</span>
-        <button class="btn" onclick={disconnect}>Disconnect</button>
+        <button class="btn" onclick={disconnect}>{t('conn.disconnect')}</button>
+        <LangSwitch />
       </div>
     </header>
 
@@ -233,6 +238,10 @@
   }
   .state.offline .dot {
     background: var(--warning);
+  }
+  .lang-top {
+    display: flex;
+    justify-content: flex-end;
   }
   .host {
     font-size: 12px;

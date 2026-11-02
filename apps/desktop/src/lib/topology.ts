@@ -1,5 +1,6 @@
 import { machineOrder, type CurrentWork } from './jobs';
-import { unitWord } from './llm';
+import { unitWord, type Translate } from './i18n';
+import { unitOf } from './llm';
 import type { MoveTracker } from './moves';
 import type { NodeId, PairedDevice } from './types';
 
@@ -102,11 +103,11 @@ export function receivingMachines(tracker: MoveTracker): Set<NodeId> {
 }
 
 /** "frames 201–400 · 45%", "+1" when it runs more pieces, or "Idle". */
-export function workLabel(work: CurrentWork[]): string {
+export function workLabel(work: CurrentWork[], t: Translate): string {
   const w = work[0];
-  if (!w) return 'Idle';
+  if (!w) return t('node.idle');
   const more = work.length > 1 ? ` +${work.length - 1}` : '';
-  return `${unitWord(w.runner, 2)} ${w.frame_start}–${w.frame_end} · ${Math.round(w.fraction * 100)}%${more}`;
+  return `${unitWord(t, unitOf(w.runner), 2)} ${w.frame_start}–${w.frame_end} · ${Math.round(w.fraction * 100)}%${more}`;
 }
 
 /**

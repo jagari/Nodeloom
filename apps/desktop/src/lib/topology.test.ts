@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { translator } from './i18n';
 import type { CurrentWork } from './jobs';
 import { NO_MOVES, type Move } from './moves';
 import {
@@ -13,6 +14,8 @@ import {
   workLabel,
 } from './topology';
 import type { PairedDevice } from './types';
+
+const en = translator('en');
 
 const devices = (n: number): PairedDevice[] =>
   Array.from({ length: n }, (_, i) => ({ id: `id-${i}`, name: `machine-${i}` }));
@@ -92,13 +95,13 @@ describe('workLabel', () => {
   });
 
   it('names the piece and its progress', () => {
-    expect(workLabel([work('fake', 0.454)])).toBe('frames 201–400 · 45%');
-    expect(workLabel([work('llm', 1)])).toBe('questions 201–400 · 100%');
+    expect(workLabel([work('fake', 0.454)], en)).toBe('frames 201–400 · 45%');
+    expect(workLabel([work('llm', 1)], en)).toBe('questions 201–400 · 100%');
   });
 
   it('counts extra pieces and says Idle without one', () => {
-    expect(workLabel([work('fake', 0), work('fake', 0)])).toBe('frames 201–400 · 0% +1');
-    expect(workLabel([])).toBe('Idle');
+    expect(workLabel([work('fake', 0), work('fake', 0)], en)).toBe('frames 201–400 · 0% +1');
+    expect(workLabel([], en)).toBe('Idle');
   });
 });
 

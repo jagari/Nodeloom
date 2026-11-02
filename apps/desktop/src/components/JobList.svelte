@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { MoveTracker } from '../lib/moves';
   import type { ClusterSnapshot, NodeId } from '../lib/types';
+  import { t } from '../lib/locale.svelte';
   import JobCard from './JobCard.svelte';
 
   interface Props {
@@ -20,16 +21,16 @@
   const earlier = $derived(jobs.slice(1));
 </script>
 
-<section class="jobs" aria-label="Jobs">
+<section class="jobs" aria-label={t('jobs.label')}>
   {#if latest}
     <JobCard job={latest} newest summaries={snapshot.summaries} {names} {slots} {moves} />
   {:else}
-    <p class="card muted">No jobs yet. Start one above and it will be split across the machines.</p>
+    <p class="card muted">{t('jobs.empty')}</p>
   {/if}
 
   {#if earlier.length > 0}
     <details class="card earlier">
-      <summary><h2>Earlier jobs ({earlier.length})</h2></summary>
+      <summary><h2>{t('jobs.earlier', { count: earlier.length })}</h2></summary>
       <div class="list">
         {#each earlier as job (job.job_id)}
           <JobCard {job} newest={false} summaries={snapshot.summaries} {names} {slots} {moves} />

@@ -1,7 +1,10 @@
 <script lang="ts">
+  import { errorText } from '../lib/i18n';
   import { DEMO_JOB } from '../lib/jobs';
   import { availableModels, llmJob, parsePrompts, promptProblem, SAMPLE_PROMPTS } from '../lib/llm';
+  import { t } from '../lib/locale.svelte';
   import type { JobView, NodeView, TaskPayload } from '../lib/types';
+  import Rich from './Rich.svelte';
 
   interface Props {
     nodes: NodeView[];
@@ -19,7 +22,8 @@
   let frameEnd = $state(250);
   let millis = $state(50);
   let busy = $state(false);
-  let error = $state('');
+  // Kept as caught, so the text follows a language switch.
+  let error = $state<unknown>(null);
 
   // Follow what the cluster can actually run.
   $effect(() => {
@@ -30,9 +34,9 @@
   const demoMachines = $derived(nodes.filter((n) => n.info.runners.includes('fake')).length);
   const demoBlocked = $derived(
     nodes.length === 0
-      ? 'Add a machine first.'
+      ? t('start.noMachine')
       : demoMachines === 0
-        ? 'No machine has the test runner. Start agents with --enable-fake-runner.'
+        ? t('start.noFake', { flag: '--enable-fake-runner' })
         : '',
   );
   // 600 frames × 50 ms, shared evenly: what the audience will wait.
@@ -46,18 +50,19 @@
   $effect(() => {
     if (models.length > 0 && !models.some((m) => m.model === model)) model = models[0]!.model;
   });
+  // The sample questions are content, not interface: they stay as written.
   let promptText = $state(SAMPLE_PROMPTS.join('\n'));
   const prompts = $derived(parsePrompts(promptText));
-  const problem = $derived(promptProblem(prompts));
+  const problem = $derived(promptProblem(prompts, t));
   const aiMachines = $derived(models.find((m) => m.model === model)?.machines ?? 0);
 
   async function send(payload: TaskPayload) {
-    error = '';
+    error = null;
     busy = true;
     try {
       await submit(payload);
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      error = e;
     } finally {
       busy = false;
     }
@@ -77,83 +82,83 @@
   <div class="col">
     <div class="demo">
       <div>
-        <h2>Start a job</h2>
+        <h2>{t('start.title')}</h2>
         <p class="muted">
           {#if demoBlocked}
             {demoBlocked}
           {:else}
-            Demo job: 600 test frames split across {demoMachines} machine{demoMachines === 1 ? '' : 's'}, about {demoSeconds}
-            s. A test that only waits; nothing is rendered.
+            {t('start.demoHint', { machines: t('count.machine', { count: demoMachines }), seconds: demoSeconds })}
           {/if}
         </p>
       </div>
       <button class="btn primary big" type="button" disabled={busy || !!demoBlocked} onclick={() => send(DEMO_JOB)}>
-        {busy ? 'Starting…' : 'Demo job'}
+        {busy ? t('common.starting') : t('start.demo')}
       </button>
     </div>
     <details>
-      <summary>Custom job</summary>
+      <summary>{t('custom.title')}</summary>
       <div class="grid">
         <label class="field">
-          <span>Runner</span>
+          <span>{t('custom.runner')}</span>
           <select bind:value={runner} disabled={available.length === 0}>
             {#each available as r (r)}
-              <option value={r}>{r === 'blender' ? 'Blender render' : 'Test (sleep only)'}</option>
+              <option value={r}>{r === 'blender' ? t('custom.blender') : t('custom.fake')}</option>
             {:else}
-              <option>Add a machine first</option>
+              <option>{t('custom.addFirst')}</option>
             {/each}
           </select>
         </label>
         {#if runner === 'blender'}
           <label class="field wide">
-            <span>.blend file (relative to each machine’s work folder)</span>
+            <span>{t('custom.blendFile')}</span>
             <input bind:value={blendFile} required spellcheck="false" />
           </label>
         {:else}
           <label class="field">
-            <span>Milliseconds per frame</span>
+            <span>{t('custom.millis')}</span>
             <input type="number" min="0" bind:value={millis} required />
           </label>
         {/if}
         <label class="field">
-          <span>First frame</span>
+          <span>{t('custom.first')}</span>
           <input type="number" min="0" bind:value={frameStart} required />
         </label>
         <label class="field">
-          <span>Last frame</span>
+          <span>{t('custom.last')}</span>
           <input type="number" min="0" bind:value={frameEnd} required />
         </label>
       </div>
       <div class="actions">
         <button class="btn primary" type="submit" disabled={busy || available.length === 0}>
-          {busy ? 'Starting…' : 'Split across machines'}
+          {busy ? t('common.starting') : t('custom.submit')}
         </button>
       </div>
     </details>
   </div>
   <div class="demo ai">
     <div class="ai-text">
-      <h3>Ask the local AI</h3>
+      <h3>{t('ai.title')}</h3>
       {#if models.length === 0}
         <p class="muted">
-          No machine runs a local LLM yet. Install <a href="https://ollama.com/download" target="_blank" rel="noreferrer"
-            >Ollama</a
-          >
-          and a model on the machines (for example <code>ollama pull llama3.2:1b</code>), then restart Nodeloom there.
+          <Rich text={t('ai.none')}>
+            {#snippet ollama()}<a href="https://ollama.com/download" target="_blank" rel="noreferrer">Ollama</a>{/snippet}
+            {#snippet command()}<code>ollama pull llama3.2:1b</code>{/snippet}
+          </Rich>
         </p>
       {:else}
         <p class="muted">
-          {prompts.length} question{prompts.length === 1 ? '' : 's'} split across {aiMachines} machine{aiMachines === 1
-            ? ''
-            : 's'}; each answers with its own model.
+          {t('ai.hint', {
+            questions: t('count.question', { count: prompts.length }),
+            machines: t('count.machine', { count: aiMachines }),
+          })}
         </p>
         <div class="ai-fields">
           <label class="field">
             <!-- The options already say "model · N machines". -->
-            <span class="sr-only">Model</span>
+            <span class="sr-only">{t('ai.model')}</span>
             <select bind:value={model}>
               {#each models as m (m.model)}
-                <option value={m.model}>{m.model} · {m.machines} machine{m.machines === 1 ? '' : 's'}</option>
+                <option value={m.model}>{m.model} · {t('count.machine', { count: m.machines })}</option>
               {/each}
             </select>
           </label>
@@ -163,13 +168,13 @@
             disabled={busy || !!problem || !model}
             onclick={() => send(llmJob(model, prompts))}
           >
-            {busy ? 'Starting…' : 'Ask the AI'}
+            {busy ? t('common.starting') : t('ai.ask')}
           </button>
         </div>
         <details class="questions">
-          <summary>Questions ({prompts.length})</summary>
+          <summary>{t('ai.questions', { count: prompts.length })}</summary>
           <label class="field">
-            <span>One question per line</span>
+            <span>{t('ai.perLine')}</span>
             <textarea rows="8" bind:value={promptText} spellcheck="false"></textarea>
           </label>
         </details>
@@ -177,7 +182,7 @@
       {/if}
     </div>
   </div>
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if error}<p class="error" role="alert">{errorText(error, t)}</p>{/if}
 </form>
 
 <style>

@@ -1,5 +1,8 @@
 <script lang="ts">
   import type { PairedRow } from '../lib/devices';
+  import { errorText } from '../lib/i18n';
+  import { t } from '../lib/locale.svelte';
+  import Rich from './Rich.svelte';
   import type { NodeId } from '../lib/types';
 
   interface Props {
@@ -16,16 +19,17 @@
   /** Machine whose removal waits for a second click (not window.confirm(),
    * which the macOS webview always answers with false). */
   let confirming = $state<NodeId | null>(null);
-  let error = $state('');
+  // Kept as caught, so the text follows a language switch.
+  let error = $state<unknown>(null);
 
   async function onremove(row: PairedRow) {
     confirming = null;
     busy = row.id;
-    error = '';
+    error = null;
     try {
       await remove(row.id);
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      error = e;
     } finally {
       busy = null;
     }
@@ -34,8 +38,8 @@
 
 <!-- Folded: managing machines is not part of the demo, but stays one click away. -->
 <details class="card paired">
-  <summary><h2>Paired machines ({rows.length})</h2></summary>
-  {#if error}<p class="problem" role="alert">{error}</p>{/if}
+  <summary><h2>{t('paired.title', { count: rows.length })}</h2></summary>
+  {#if error}<p class="problem" role="alert">{errorText(error, t)}</p>{/if}
   <ul class="list">
     {#each rows as row (row.id)}
       <li>
@@ -48,27 +52,28 @@
               <circle cx="8" cy="8" r="4.5" />
             {/if}
           </svg>
-          {row.online ? 'Online' : 'Offline'}
+          {row.online ? t('paired.online') : t('paired.offline')}
         </span>
         <span class="name">{row.name}</span>
         {#if confirming === row.id}
           <!-- Cancel takes the spot Remove had, so a double click cannot remove. -->
           <button class="btn danger" disabled={!live || busy !== null} onclick={() => onremove(row)}>
-            Remove for good
+            {t('paired.removeForGood')}
           </button>
-          <button class="btn" {@attach focus} onclick={() => (confirming = null)}>Cancel</button>
+          <button class="btn" {@attach focus} onclick={() => (confirming = null)}>{t('common.cancel')}</button>
         {:else}
           <button class="btn" disabled={!live || busy !== null} onclick={() => (confirming = row.id)}>
-            {busy === row.id ? 'Removing…' : 'Remove'}
+            {busy === row.id ? t('paired.removing') : t('paired.remove')}
           </button>
         {/if}
       </li>
       {#if confirming === row.id}
         <li class="explain muted" role="status">
-          Removing {row.name} disconnects it at once and refuses its key from then on. To add it again, run
-          <code>nodeloom-agent reset-identity</code> on it and approve it here. If it was started with
-          <code>--token</code>, that machine also holds the admin token: rotate it with
-          <code>nodeloom-master --rotate-admin-token</code>.
+          <Rich text={t('paired.explain', { name: row.name })}>
+            {#snippet reset()}<code>nodeloom-agent reset-identity</code>{/snippet}
+            {#snippet token()}<code>--token</code>{/snippet}
+            {#snippet rotate()}<code>nodeloom-master --rotate-admin-token</code>{/snippet}
+          </Rich>
         </li>
       {/if}
     {/each}
