@@ -808,6 +808,8 @@ async fn an_llm_job_is_answered_by_the_machines_with_the_model() {
             prompts,
             frame_start: 1,
             frame_end: 6,
+            first_prompt: 1,
+            max_tokens: None,
         },
     };
     assert_eq!(h.post_job(&job).await.status().as_u16(), 200);
@@ -835,6 +837,8 @@ async fn an_llm_job_is_answered_by_the_machines_with_the_model() {
             prompts: vec!["q".into()],
             frame_start: 1,
             frame_end: 1,
+            first_prompt: 1,
+            max_tokens: None,
         },
     };
     let reply = h.post_job(&missing).await;
@@ -846,6 +850,105 @@ async fn an_llm_job_is_answered_by_the_machines_with_the_model() {
             .unwrap()
             .contains("ollama pull absent:1b")
     );
+}
+
+#[tokio::test]
+async fn a_long_document_is_summarized_across_the_machines() {
+    use nodeloom_proto::{SubmitSummary, SummaryState};
+    use nodeloom_runner_llm::LlmRunner;
+    let mut h = start_master().await;
+    let ollama = fake_ollama(&["tiny:1b"]).await;
+    for id in ["sum-a", "sum-b", "sum-c"] {
+        let llm = LlmRunner::detect(&ollama).await.unwrap();
+        h.spawn_agent_with(
+            identity(id),
+            Some(TOKEN),
+            None,
+            RunnerSet::new().with(Arc::new(llm)),
+        );
+    }
+    h.wait_for("3 nodes", |s| s.nodes.len() == 3).await;
+
+    // About 70,000 characters of Korean, over 200 KB: larger than other
+    // requests may be, and dozens of parts.
+    let text = (0..2000)
+        .map(|i| format!("{i}번째 문장은 분산 처리에 대한 긴 보고서의 일부입니다."))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let url = format!("{}/api/summaries", h.base);
+    let request = SubmitSummary {
+        model: "tiny:1b".into(),
+        title: "보고서.pdf".into(),
+        text,
+    };
+    let anonymous = reqwest::Client::new()
+        .post(&url)
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status().as_u16(), 401);
+    let reply = reqwest::Client::new()
+        .post(&url)
+        .header("Authorization", h.bearer())
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status().as_u16(), 200);
+
+    let snap = h
+        .wait_for("summary done", |s| {
+            s.summaries
+                .first()
+                .is_some_and(|x| x.state != SummaryState::Running)
+        })
+        .await;
+    let summary = &snap.summaries[0];
+    assert_eq!(summary.state, SummaryState::Done, "{:?}", summary.error);
+    assert!(summary.parts >= 20, "{}", summary.parts);
+    // The fake model echoes each prompt, so the part summaries are long
+    // and are combined in groups before the final summary.
+    assert!(summary.jobs.len() >= 3, "{:?}", summary.jobs);
+    let last = snap
+        .jobs
+        .iter()
+        .find(|j| Some(&j.job_id) == summary.jobs.last())
+        .unwrap();
+    assert_eq!(
+        last.outputs.len(),
+        1,
+        "one machine writes the final summary"
+    );
+    let parts = snap
+        .jobs
+        .iter()
+        .find(|j| j.job_id == summary.jobs[0])
+        .unwrap();
+    assert_eq!(parts.tasks.len(), 3, "parts split over all three machines");
+    assert_eq!(parts.outputs.len() as u32, summary.parts);
+    // The fake model echoes its prompt: the final one combines the parts.
+    let result = summary.result.as_deref().unwrap();
+    assert!(
+        result.starts_with(
+            "tiny:1b: Below are summaries of consecutive parts of the document \"보고서.pdf\""
+        ),
+        "{result}"
+    );
+
+    // A document of nothing is refused.
+    let empty = SubmitSummary {
+        text: " \n ".into(),
+        ..request
+    };
+    let reply = reqwest::Client::new()
+        .post(&url)
+        .header("Authorization", h.bearer())
+        .json(&empty)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status().as_u16(), 400);
 }
 
 #[tokio::test]

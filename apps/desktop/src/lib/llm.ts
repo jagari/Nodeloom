@@ -1,6 +1,10 @@
 import type { NodeView, RunnerKind, TaskPayload } from './types';
 
-/** Mirrors the limits in nodeloom-core's validate.rs. */
+/**
+ * Limits for typed questions. `MAX_PROMPTS` mirrors nodeloom-core's
+ * validate.rs; its prompt length limit is higher (for document parts, see
+ * summary.ts), and typed questions stay short to fit the 64 KiB request.
+ */
 export const MAX_PROMPTS = 200;
 export const MAX_PROMPT_CHARS = 2000;
 

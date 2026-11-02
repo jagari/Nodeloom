@@ -12,11 +12,14 @@ use nodeloom_proto::{NodeInfo, TaskPayload};
 /// Upper bound on frames in a single task; guards against absurd requests.
 pub const MAX_FRAMES_PER_TASK: u32 = 1_000_000;
 
-/// Limits on an LLM job. Every piece carries the whole prompt list, and the
-/// master's request body limit is 64 KiB.
+/// Limits on an LLM job. Jobs typed in the dashboard are far smaller (the
+/// master's request body limit is 64 KiB); the master's own document
+/// summaries use the room: a part of a document is one prompt.
 pub const MAX_PROMPTS: usize = 200;
-pub const MAX_PROMPT_CHARS: usize = 2000;
-pub const MAX_PROMPTS_BYTES: usize = 48 * 1024;
+pub const MAX_PROMPT_CHARS: usize = 8000;
+pub const MAX_PROMPTS_BYTES: usize = 2 * 1024 * 1024;
+/// Longest answer a job may ask for, in tokens.
+pub const MAX_ANSWER_TOKENS: u32 = 2048;
 /// Most models one machine may advertise.
 pub const MAX_LLM_MODELS: usize = 64;
 const MAX_MODEL_NAME: usize = 100;
@@ -36,23 +39,32 @@ pub fn validate_payload(payload: &TaskPayload) -> Result<(), String> {
                 return Err("blend_file must end with .blend".into());
             }
         }
-        TaskPayload::Llm { model, prompts, .. } => {
+        TaskPayload::Llm {
+            model,
+            prompts,
+            first_prompt,
+            max_tokens,
+            ..
+        } => {
             validate_model_name(model)?;
+            if max_tokens.is_some_and(|n| n == 0 || n > MAX_ANSWER_TOKENS) {
+                return Err(format!("max_tokens must be 1 to {MAX_ANSWER_TOKENS}"));
+            }
             if prompts.is_empty() || prompts.len() > MAX_PROMPTS {
                 return Err(format!("give 1 to {MAX_PROMPTS} prompts"));
             }
             for (i, prompt) in prompts.iter().enumerate() {
+                let number = *first_prompt as usize + i;
                 if prompt.trim().is_empty() {
-                    return Err(format!("prompt {} is empty", i + 1));
+                    return Err(format!("prompt {number} is empty"));
                 }
                 if prompt.chars().count() > MAX_PROMPT_CHARS {
                     return Err(format!(
-                        "prompt {} is longer than {MAX_PROMPT_CHARS} characters",
-                        i + 1
+                        "prompt {number} is longer than {MAX_PROMPT_CHARS} characters"
                     ));
                 }
                 if prompt.contains('\0') {
-                    return Err(format!("prompt {} contains NUL", i + 1));
+                    return Err(format!("prompt {number} contains NUL"));
                 }
             }
             if prompts.iter().map(String::len).sum::<usize>() > MAX_PROMPTS_BYTES {
@@ -60,8 +72,12 @@ pub fn validate_payload(payload: &TaskPayload) -> Result<(), String> {
                     "prompts are longer than {MAX_PROMPTS_BYTES} bytes in all"
                 ));
             }
-            if start == 0 || end as usize > prompts.len() {
-                return Err(format!("prompts are numbered 1 to {}", prompts.len()));
+            // The prompts given must cover exactly the frames to run.
+            let last = *first_prompt as u64 + prompts.len() as u64 - 1;
+            if *first_prompt == 0 || start < *first_prompt || u64::from(end) > last {
+                return Err(format!(
+                    "prompts here are numbered {first_prompt} to {last}"
+                ));
             }
         }
         TaskPayload::Fake { .. } => {}
@@ -250,6 +266,8 @@ mod tests {
             prompts: prompts.iter().map(|p| (*p).to_owned()).collect(),
             frame_start: start,
             frame_end: end,
+            first_prompt: 1,
+            max_tokens: None,
         }
     }
 
@@ -281,12 +299,51 @@ mod tests {
             validate_payload(&llm(&many, 1, 1)).is_err(),
             "too many prompts"
         );
-        let big = "y".repeat(MAX_PROMPT_CHARS);
-        let heavy = vec![big.as_str(); MAX_PROMPTS_BYTES / MAX_PROMPT_CHARS + 1];
+        let mut odd = llm(&["a"], 1, 1);
+        if let TaskPayload::Llm { max_tokens, .. } = &mut odd {
+            *max_tokens = Some(0);
+        }
+        assert!(validate_payload(&odd).is_err(), "no room to answer");
+        if let TaskPayload::Llm { max_tokens, .. } = &mut odd {
+            *max_tokens = Some(MAX_ANSWER_TOKENS);
+        }
+        assert!(validate_payload(&odd).is_ok());
+        // Three bytes a character, so the byte limit bites before the count.
+        let big = "가".repeat(MAX_PROMPT_CHARS);
+        let heavy = vec![big.as_str(); MAX_PROMPTS_BYTES / big.len() + 1];
+        assert!(heavy.len() <= MAX_PROMPTS);
         assert!(
             validate_payload(&llm(&heavy, 1, 1)).is_err(),
             "too many bytes"
         );
+    }
+
+    #[test]
+    fn a_piece_carries_exactly_its_own_prompts() {
+        let whole = llm(&["a", "b", "c", "d"], 1, 4);
+        let piece = whole.with_frames(3, 4);
+        assert!(validate_payload(&piece).is_ok());
+        let TaskPayload::Llm { prompts, .. } = &piece else {
+            unreachable!()
+        };
+        assert_eq!(prompts.len(), 2);
+        // Claiming frames whose prompts it does not carry is refused.
+        let mut stretched = piece.clone();
+        if let TaskPayload::Llm { frame_start, .. } = &mut stretched {
+            *frame_start = 2;
+        }
+        assert!(validate_payload(&stretched).is_err());
+        let mut zero = piece;
+        if let TaskPayload::Llm {
+            first_prompt,
+            frame_start,
+            ..
+        } = &mut zero
+        {
+            *first_prompt = 0;
+            *frame_start = 0;
+        }
+        assert!(validate_payload(&zero).is_err());
     }
 
     #[test]
