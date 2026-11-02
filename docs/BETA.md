@@ -129,7 +129,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
   - 처음 실행하면 `open the dashboard: http://192.168.0.12:7878/#token=…` 줄이 나온다. 이 주소를 브라우저로 열면 로그인까지 끝난다.
   - 두 번째부터는 토큰을 다시 출력하지 않는다. 다른 브라우저에서는 `http://<마스터 IP>:7878`을 열고, 데이터 폴더의 `admin-token` 파일 값을 넣는다.
 - 참여할 기기: `nodeloom-agent --enable-fake-runner`를 실행한다.
-  - 마스터를 자동으로 찾는다. 못 찾으면 `--master 192.168.0.12:7878`로 주소를 준다.
+  - 마스터를 자동으로 찾는다. 찾을 때까지 계속 찾으므로 마스터보다 먼저 켜도 된다. 끝내 못 찾으면 `--master 192.168.0.12:7878`로 주소를 준다.
   - 출력된 6자리 코드를 대시보드와 대조해 승인한다. 코드는 `nodeloom-agent pairing-code`로 다시 볼 수 있다.
 
 명령줄 버전은 부팅할 때 자동으로 시작하지 않는다(#9).
