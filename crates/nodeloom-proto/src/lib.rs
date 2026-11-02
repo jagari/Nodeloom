@@ -31,6 +31,8 @@ pub enum RunnerKind {
     /// Test runner that only sleeps; never touches the machine.
     Fake,
     Blender,
+    /// A local LLM (Ollama) answering a list of prompts.
+    Llm,
 }
 
 /// Static facts about a machine, sent once when an agent connects.
@@ -43,6 +45,10 @@ pub struct NodeInfo {
     pub cpu_cores: usize,
     pub total_memory_bytes: u64,
     pub runners: Vec<RunnerKind>,
+    /// Models the local LLM runner can use, so LLM jobs only go to machines
+    /// that have the model. Empty without an LLM runner.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub llm_models: Vec<String>,
 }
 
 /// A point-in-time resource sample.
@@ -77,6 +83,15 @@ pub enum TaskPayload {
         frame_start: u32,
         frame_end: u32,
     },
+    /// Asks a local LLM each prompt in `frame_start..=frame_end`; "frames"
+    /// are 1-based prompt numbers, so a job splits like a render. Every
+    /// piece carries the whole list, which is small (see validation).
+    Llm {
+        model: String,
+        prompts: Vec<String>,
+        frame_start: u32,
+        frame_end: u32,
+    },
 }
 
 impl TaskPayload {
@@ -84,6 +99,26 @@ impl TaskPayload {
         match self {
             TaskPayload::Fake { .. } => RunnerKind::Fake,
             TaskPayload::Blender { .. } => RunnerKind::Blender,
+            TaskPayload::Llm { .. } => RunnerKind::Llm,
+        }
+    }
+
+    /// The LLM model this task needs on the machine that runs it.
+    pub fn llm_model(&self) -> Option<&str> {
+        match self {
+            TaskPayload::Llm { model, .. } => Some(model),
+            _ => None,
+        }
+    }
+
+    /// The prompt for `frame`, for an LLM task.
+    pub fn prompt(&self, frame: u32) -> Option<&str> {
+        match self {
+            TaskPayload::Llm { prompts, .. } => frame
+                .checked_sub(1)
+                .and_then(|i| prompts.get(i as usize))
+                .map(String::as_str),
+            _ => None,
         }
     }
 
@@ -96,6 +131,11 @@ impl TaskPayload {
                 ..
             }
             | TaskPayload::Blender {
+                frame_start,
+                frame_end,
+                ..
+            }
+            | TaskPayload::Llm {
                 frame_start,
                 frame_end,
                 ..
@@ -113,6 +153,11 @@ impl TaskPayload {
                 ..
             }
             | TaskPayload::Blender {
+                frame_start,
+                frame_end,
+                ..
+            }
+            | TaskPayload::Llm {
                 frame_start,
                 frame_end,
                 ..
@@ -174,6 +219,12 @@ pub enum AgentMessage {
         task_id: TaskId,
         error: String,
     },
+    /// What one frame produced: an LLM task's answer to prompt `frame`.
+    TaskOutput {
+        task_id: TaskId,
+        frame: u32,
+        text: String,
+    },
 }
 
 /// Messages the master sends to an agent.
@@ -222,7 +273,19 @@ pub struct TaskView {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JobView {
     pub job_id: JobId,
+    pub runner: RunnerKind,
     pub tasks: Vec<TaskView>,
+    /// Results collected so far, by frame: an LLM job's answers.
+    #[serde(default)]
+    pub outputs: Vec<OutputView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutputView {
+    pub frame: u32,
+    pub node: NodeId,
+    pub prompt: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -298,6 +361,7 @@ mod tests {
                 cpu_cores: 1,
                 total_memory_bytes: 1,
                 runners: vec![],
+                llm_models: vec![],
             },
             token: None,
         };
@@ -331,6 +395,34 @@ mod tests {
                 frame_end: 20,
             }
         );
+    }
+
+    #[test]
+    fn llm_frames_are_prompt_numbers() {
+        let p = TaskPayload::Llm {
+            model: "llama3.2:1b".into(),
+            prompts: vec!["a".into(), "b".into(), "c".into()],
+            frame_start: 1,
+            frame_end: 3,
+        };
+        assert_eq!(p.kind(), RunnerKind::Llm);
+        assert_eq!(p.llm_model(), Some("llama3.2:1b"));
+        let piece = p.with_frames(2, 3);
+        assert_eq!(piece.frames(), (2, 3));
+        assert_eq!(piece.prompt(2), Some("b"));
+        assert_eq!(piece.prompt(0), None);
+        assert_eq!(piece.prompt(4), None);
+        let json = serde_json::to_string(&piece).unwrap();
+        assert!(json.contains(r#""runner":"llm""#));
+        assert_eq!(serde_json::from_str::<TaskPayload>(&json).unwrap(), piece);
+    }
+
+    #[test]
+    fn machines_without_models_still_parse() {
+        let json = r#"{"id":"a","hostname":"h","os":"o","arch":"x","cpu_cores":1,"total_memory_bytes":1,"runners":["fake"]}"#;
+        let info: NodeInfo = serde_json::from_str(json).unwrap();
+        assert!(info.llm_models.is_empty());
+        assert!(!serde_json::to_string(&info).unwrap().contains("llm_models"));
     }
 
     #[test]

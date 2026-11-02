@@ -903,6 +903,7 @@ dependencies = [
  "nodeloom-core",
  "nodeloom-proto",
  "nodeloom-runner-blender",
+ "nodeloom-runner-llm",
  "serde",
  "serde_json",
  "tempfile",
@@ -946,6 +947,7 @@ dependencies = [
  "nodeloom-agent",
  "nodeloom-core",
  "nodeloom-proto",
+ "nodeloom-runner-llm",
  "reqwest",
  "rust-embed",
  "serde",
@@ -976,6 +978,21 @@ dependencies = [
  "nodeloom-core",
  "nodeloom-proto",
  "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nodeloom-runner-llm"
+version = "0.1.0-beta.3"
+dependencies = [
+ "async-trait",
+ "axum",
+ "nodeloom-core",
+ "nodeloom-proto",
+ "reqwest",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]

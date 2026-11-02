@@ -1,5 +1,6 @@
 <script lang="ts">
   import { jobSegments, slotColor, summarizeJob } from '../lib/jobs';
+  import { unitWord } from '../lib/llm';
   import { movesOfJob, type MoveTracker } from '../lib/moves';
   import type { ClusterSnapshot, NodeId } from '../lib/types';
   import StatusBadge from './StatusBadge.svelte';
@@ -28,12 +29,13 @@
     {@const jobMoves = movesOfJob(moves, job.job_id)}
     {@const justMoved = new Set(jobMoves.filter((m) => m.to).map((m) => m.task_id))}
     {@const machines = new Set(job.tasks.map((t) => t.node).filter(Boolean)).size}
+    {@const units = unitWord(job.runner, 2)}
     <article class="card job">
       <header>
         <div>
           <strong>Job {job.job_id + 1}</strong>
           <span class="muted">
-            · {s.totalFrames} frames in {job.tasks.length} piece{job.tasks.length === 1 ? '' : 's'} on {machines}
+            · {s.totalFrames} {unitWord(job.runner, s.totalFrames)} in {job.tasks.length} piece{job.tasks.length === 1 ? '' : 's'} on {machines}
             machine{machines === 1 ? '' : 's'}
           </span>
         </div>
@@ -56,19 +58,19 @@
             </svg>
             {#if m.to}
               <span>
-                <strong>Moved to another machine:</strong> frames {m.frame_start}–{m.frame_end} from
+                <strong>Moved to another machine:</strong> {units} {m.frame_start}–{m.frame_end} from
                 <strong>{nameOf(m.from)}</strong> → <strong>{nameOf(m.to)}</strong>
               </span>
             {:else}
               <span>
-                <strong>{nameOf(m.from)} left:</strong> frames {m.frame_start}–{m.frame_end} wait for another machine…
+                <strong>{nameOf(m.from)} left:</strong> {units} {m.frame_start}–{m.frame_end} wait for another machine…
               </span>
             {/if}
           </p>
         {/each}
       </div>
 
-      <div class="bar" role="img" aria-label="Job {job.job_id + 1}: {pct(s.fraction)} of {s.totalFrames} frames done across {machines} machines">
+      <div class="bar" role="img" aria-label="Job {job.job_id + 1}: {pct(s.fraction)} of {s.totalFrames} {units} done across {machines} machines">
         {#each layout.segments as seg (seg.task.task_id)}
           {@const t = seg.task}
           <div
@@ -77,7 +79,7 @@
             style:left="{seg.left}%"
             style:width="calc({seg.width}% - 3px)"
             style:--c={t.node ? slotColor(slots.get(t.node)) : 'var(--muted)'}
-            title="{nameOf(t.node)} · frames {t.frame_start}–{t.frame_end} · {pct(seg.fraction)}"
+            title="{nameOf(t.node)} · {units} {t.frame_start}–{t.frame_end} · {pct(seg.fraction)}"
           >
             <div class="fill" style:width="{seg.fraction * 100}%"></div>
             {#if seg.width >= 12}
@@ -87,7 +89,7 @@
         {/each}
       </div>
       <div class="axis muted" aria-hidden="true">
-        <span>frame {layout.first}</span><span>{layout.last}</span>
+        <span>{unitWord(job.runner, 1)} {layout.first}</span><span>{layout.last}</span>
       </div>
 
       <ul class="pieces">
@@ -101,7 +103,7 @@
                 <span class="tag">→ moved from {nameOf(moves.movedFrom[t.task_id] ?? null)}</span>
               {/if}
             </span>
-            <span class="nums">frames {t.frame_start}–{t.frame_end}</span>
+            <span class="nums">{units} {t.frame_start}–{t.frame_end}</span>
             <span class="nums pct">{pct(seg.fraction)}</span>
             <span class="state">
               <StatusBadge state={t.state} />
@@ -110,6 +112,24 @@
           </li>
         {/each}
       </ul>
+
+      {#if job.outputs.length > 0}
+        <!-- Only the newest job's answers start open, so old ones do not push it down. -->
+        <details class="answers" open={job.job_id === jobs[0]?.job_id}>
+          <summary>Answers ({job.outputs.length} of {s.totalFrames})</summary>
+          <ol>
+            {#each job.outputs as o (o.frame)}
+              <li>
+                <p class="q"><span class="num">{o.frame}.</span> {o.prompt}</p>
+                <p class="a">{o.text}</p>
+                <p class="by muted">
+                  <span class="swatch" style:--c={slotColor(slots.get(o.node))}></span>{nameOf(o.node)}
+                </p>
+              </li>
+            {/each}
+          </ol>
+        </details>
+      {/if}
     </article>
   {:else}
     <p class="muted">No jobs yet. Start one above and it will be split across the machines.</p>
@@ -255,6 +275,52 @@
     align-items: center;
     padding: 6px 0;
     border-top: 1px solid var(--grid);
+  }
+  .answers {
+    margin-top: 12px;
+    border-top: 1px solid var(--grid);
+    padding-top: 10px;
+  }
+  .answers summary {
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .answers ol {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 10px;
+  }
+  .answers li {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    animation: arrive 0.4s ease-out;
+  }
+  .answers p {
+    margin: 0;
+  }
+  .q {
+    font-weight: 600;
+  }
+  .num {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .a {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .by {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
   }
   .swatch {
     width: 12px;

@@ -57,6 +57,8 @@ pub fn describe_node(id: NodeId, runners: Vec<RunnerKind>) -> NodeInfo {
         cpu_cores: sys.cpus().len().max(1),
         total_memory_bytes: sys.total_memory(),
         runners,
+        // Filled in by the agent from its runners.
+        llm_models: Vec::new(),
     })
 }
 

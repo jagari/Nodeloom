@@ -1,4 +1,4 @@
-import type { ClusterSnapshot, JobView, NodeId, PairedDevice, TaskPayload, TaskView } from './types';
+import type { ClusterSnapshot, JobView, NodeId, PairedDevice, RunnerKind, TaskPayload, TaskView } from './types';
 
 export type JobState = 'pending' | 'running' | 'done' | 'failed';
 
@@ -73,6 +73,8 @@ export function jobSegments(job: JobView): { first: number; last: number; segmen
 /** What a machine is working on right now. */
 export interface CurrentWork {
   job_id: number;
+  /** What the job's units are: frames, or an LLM job's questions. */
+  runner: RunnerKind;
   task_id: number;
   frame_start: number;
   frame_end: number;
@@ -90,6 +92,7 @@ export function workByNode(snapshot: ClusterSnapshot): Map<NodeId, CurrentWork[]
       const list = work.get(t.node) ?? [];
       list.push({
         job_id: job.job_id,
+        runner: job.runner,
         task_id: t.task_id,
         frame_start: t.frame_start,
         frame_end: t.frame_end,

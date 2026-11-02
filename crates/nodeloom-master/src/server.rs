@@ -173,7 +173,9 @@ async fn post_job(
     cluster.submit_job(request.payload).map(Json).map_err(|e| {
         let status = match e {
             SubmitError::Invalid(_) => StatusCode::BAD_REQUEST,
-            SubmitError::NoCapableNodes(_) => StatusCode::CONFLICT,
+            SubmitError::NoCapableNodes(_) | SubmitError::NoMachineWithModel(_) => {
+                StatusCode::CONFLICT
+            }
         };
         (status, e.to_string())
     })
@@ -573,6 +575,11 @@ fn handle_agent_message(cluster: &Cluster, node: &NodeId, msg: AgentMessage) {
         } => cluster.task_progress(node, task_id, frames_done),
         AgentMessage::TaskDone { task_id } => cluster.task_done(node, task_id),
         AgentMessage::TaskFailed { task_id, error } => cluster.task_failed(node, task_id, error),
+        AgentMessage::TaskOutput {
+            task_id,
+            frame,
+            text,
+        } => cluster.task_output(node, task_id, frame, text),
     }
 }
 

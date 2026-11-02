@@ -13,7 +13,7 @@ const task = (id: number, node: NodeId | null, state: TaskState = 'running'): Ta
 });
 const snap = (...tasks: TaskView[]): ClusterSnapshot => ({
   nodes: [],
-  jobs: [{ job_id: 7, tasks }],
+  jobs: [{ job_id: 7, runner: 'fake', tasks, outputs: [] }],
   pending: [],
   devices: [],
 });

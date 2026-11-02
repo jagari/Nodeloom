@@ -75,6 +75,7 @@ fn info_of(me: &Identity) -> NodeInfo {
         cpu_cores: 2,
         total_memory_bytes: 1 << 30,
         runners: vec![RunnerKind::Fake],
+        llm_models: vec![],
     }
 }
 
@@ -112,11 +113,22 @@ impl Harness {
         token: Option<&str>,
         status: Option<watch::Sender<AgentStatus>>,
     ) -> usize {
+        let runners = RunnerSet::new().with(Arc::new(FakeRunner));
+        self.spawn_agent_with(me, token, status, runners)
+    }
+
+    fn spawn_agent_with(
+        &mut self,
+        me: Identity,
+        token: Option<&str>,
+        status: Option<watch::Sender<AgentStatus>>,
+        runners: RunnerSet,
+    ) -> usize {
         let config = AgentConfig {
             master_url: format!("{}/ws/agent", self.ws_base),
             identity: me,
             token: token.map(str::to_owned),
-            runners: RunnerSet::new().with(Arc::new(FakeRunner)),
+            runners,
             metrics_interval: Duration::from_millis(50),
             status,
         };
@@ -738,6 +750,101 @@ async fn a_job_on_five_machines_survives_losing_two() {
     assert!(
         finishers.iter().all(|n| ["m2", "m3", "m4"].contains(n)),
         "{finishers:?}"
+    );
+}
+
+/// A stand-in for Ollama on this machine: offers `models` and answers
+/// "<model>: <prompt>".
+async fn fake_ollama(models: &[&str]) -> String {
+    use axum::{
+        Json, Router,
+        routing::{get, post},
+    };
+    use serde_json::{Value, json};
+    let tags = json!({ "models": models.iter().map(|m| json!({ "name": m })).collect::<Vec<_>>() });
+    let app = Router::new()
+        .route("/api/tags", get(move || async move { Json(tags) }))
+        .route(
+            "/api/generate",
+            post(|Json(body): Json<Value>| async move {
+                let answer = format!(
+                    "{}: {}",
+                    body["model"].as_str().unwrap_or(""),
+                    body["prompt"].as_str().unwrap_or("")
+                );
+                Json(json!({ "response": answer }))
+            }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    base
+}
+
+#[tokio::test]
+async fn an_llm_job_is_answered_by_the_machines_with_the_model() {
+    use nodeloom_runner_llm::LlmRunner;
+    let mut h = start_master().await;
+    let ollama = fake_ollama(&["tiny:1b"]).await;
+    for id in ["llm-a", "llm-b"] {
+        let llm = LlmRunner::detect(&ollama).await.unwrap();
+        let runners = RunnerSet::new().with(Arc::new(llm));
+        h.spawn_agent_with(identity(id), Some(TOKEN), None, runners);
+    }
+    // Without a model server: never given LLM work.
+    h.add_agent("plain", TOKEN);
+    let snap = h.wait_for("3 nodes", |s| s.nodes.len() == 3).await;
+    let with_models = snap
+        .nodes
+        .iter()
+        .filter(|n| n.info.llm_models == ["tiny:1b"])
+        .count();
+    assert_eq!(with_models, 2);
+
+    let prompts: Vec<String> = (1..=6).map(|i| format!("question {i}")).collect();
+    let job = SubmitJob {
+        payload: TaskPayload::Llm {
+            model: "tiny:1b".into(),
+            prompts,
+            frame_start: 1,
+            frame_end: 6,
+        },
+    };
+    assert_eq!(h.post_job(&job).await.status().as_u16(), 200);
+    let snap = h.wait_for("all answered", all_done).await;
+    let job = &snap.jobs[0];
+    assert_eq!(job.runner, RunnerKind::Llm);
+    assert_eq!(
+        job.tasks.len(),
+        2,
+        "split over the two machines with the model"
+    );
+    assert_eq!(job.outputs.len(), 6);
+    for (i, out) in job.outputs.iter().enumerate() {
+        let n = i + 1;
+        assert_eq!(out.frame as usize, n);
+        assert_eq!(out.prompt, format!("question {n}"));
+        assert_eq!(out.text, format!("tiny:1b: question {n}"));
+        assert!(out.node.0.starts_with("llm-"), "{out:?}");
+    }
+
+    // A model nobody has is refused with a way out.
+    let missing = SubmitJob {
+        payload: TaskPayload::Llm {
+            model: "absent:1b".into(),
+            prompts: vec!["q".into()],
+            frame_start: 1,
+            frame_end: 1,
+        },
+    };
+    let reply = h.post_job(&missing).await;
+    assert_eq!(reply.status().as_u16(), 409);
+    assert!(
+        reply
+            .text()
+            .await
+            .unwrap()
+            .contains("ollama pull absent:1b")
     );
 }
 

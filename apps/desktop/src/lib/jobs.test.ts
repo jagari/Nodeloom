@@ -11,7 +11,7 @@ const task = (id: number, start: number, end: number, done: number, state: TaskS
   state,
   error: null,
 });
-const job = (...tasks: TaskView[]): JobView => ({ job_id: 1, tasks });
+const job = (...tasks: TaskView[]): JobView => ({ job_id: 1, runner: 'fake', tasks, outputs: [] });
 
 describe('summarizeJob', () => {
   it('sums frames across tasks', () => {
@@ -70,10 +70,10 @@ describe('workByNode', () => {
     const running = { ...task(1, 1, 100, 25, 'running'), node: 'mac' };
     const done = { ...task(2, 101, 200, 100, 'done'), node: 'pi' };
     const queued = { ...task(3, 201, 300, 0, 'pending'), node: null };
-    const work = workByNode(snap([{ job_id: 4, tasks: [running, done, queued] }]));
+    const work = workByNode(snap([{ job_id: 4, runner: 'fake', tasks: [running, done, queued], outputs: [] }]));
     expect([...work.keys()]).toEqual(['mac']);
     expect(work.get('mac')).toEqual([
-      { job_id: 4, task_id: 1, frame_start: 1, frame_end: 100, frames_done: 25, fraction: 0.25 },
+      { job_id: 4, runner: 'fake', task_id: 1, frame_start: 1, frame_end: 100, frames_done: 25, fraction: 0.25 },
     ]);
   });
 });

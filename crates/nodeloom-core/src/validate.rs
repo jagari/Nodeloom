@@ -12,6 +12,15 @@ use nodeloom_proto::{NodeInfo, TaskPayload};
 /// Upper bound on frames in a single task; guards against absurd requests.
 pub const MAX_FRAMES_PER_TASK: u32 = 1_000_000;
 
+/// Limits on an LLM job. Every piece carries the whole prompt list, and the
+/// master's request body limit is 64 KiB.
+pub const MAX_PROMPTS: usize = 200;
+pub const MAX_PROMPT_CHARS: usize = 2000;
+pub const MAX_PROMPTS_BYTES: usize = 48 * 1024;
+/// Most models one machine may advertise.
+pub const MAX_LLM_MODELS: usize = 64;
+const MAX_MODEL_NAME: usize = 100;
+
 pub fn validate_payload(payload: &TaskPayload) -> Result<(), String> {
     let (start, end) = payload.frames();
     if start > end {
@@ -20,13 +29,63 @@ pub fn validate_payload(payload: &TaskPayload) -> Result<(), String> {
     if payload.frame_count() > MAX_FRAMES_PER_TASK {
         return Err(format!("more than {MAX_FRAMES_PER_TASK} frames"));
     }
-    if let TaskPayload::Blender { blend_file, .. } = payload {
-        validate_relative_path(blend_file)?;
-        if !blend_file.ends_with(".blend") {
-            return Err("blend_file must end with .blend".into());
+    match payload {
+        TaskPayload::Blender { blend_file, .. } => {
+            validate_relative_path(blend_file)?;
+            if !blend_file.ends_with(".blend") {
+                return Err("blend_file must end with .blend".into());
+            }
         }
+        TaskPayload::Llm { model, prompts, .. } => {
+            validate_model_name(model)?;
+            if prompts.is_empty() || prompts.len() > MAX_PROMPTS {
+                return Err(format!("give 1 to {MAX_PROMPTS} prompts"));
+            }
+            for (i, prompt) in prompts.iter().enumerate() {
+                if prompt.trim().is_empty() {
+                    return Err(format!("prompt {} is empty", i + 1));
+                }
+                if prompt.chars().count() > MAX_PROMPT_CHARS {
+                    return Err(format!(
+                        "prompt {} is longer than {MAX_PROMPT_CHARS} characters",
+                        i + 1
+                    ));
+                }
+                if prompt.contains('\0') {
+                    return Err(format!("prompt {} contains NUL", i + 1));
+                }
+            }
+            if prompts.iter().map(String::len).sum::<usize>() > MAX_PROMPTS_BYTES {
+                return Err(format!(
+                    "prompts are longer than {MAX_PROMPTS_BYTES} bytes in all"
+                ));
+            }
+            if start == 0 || end as usize > prompts.len() {
+                return Err(format!("prompts are numbered 1 to {}", prompts.len()));
+            }
+        }
+        TaskPayload::Fake { .. } => {}
     }
     Ok(())
+}
+
+/// Model names as Ollama spells them (`llama3.2:1b`,
+/// `hf.co/org/model:Q4_K_M`). The name is only ever sent as a JSON field to
+/// the local model server, never to a shell; the limit keeps dashboards and
+/// logs readable.
+pub fn validate_model_name(name: &str) -> Result<(), String> {
+    let ok = !name.is_empty()
+        && name.len() <= MAX_MODEL_NAME
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._:/-".contains(&b));
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "model name must be 1-{MAX_MODEL_NAME} characters of A-Z, a-z, 0-9, '.', '_', ':', '/' or '-'"
+        ))
+    }
 }
 
 /// Accepts only plain relative paths with no `..`, root or drive prefix, so a
@@ -92,6 +151,16 @@ pub fn validate_node_info(info: &NodeInfo) -> Result<(), String> {
     if unique.len() != info.runners.len() {
         return Err("runners are listed more than once".into());
     }
+    if info.llm_models.len() > MAX_LLM_MODELS {
+        return Err(format!("more than {MAX_LLM_MODELS} LLM models"));
+    }
+    for model in &info.llm_models {
+        validate_model_name(model)?;
+    }
+    let unique: HashSet<_> = info.llm_models.iter().collect();
+    if unique.len() != info.llm_models.len() {
+        return Err("LLM models are listed more than once".into());
+    }
     Ok(())
 }
 
@@ -148,6 +217,12 @@ pub fn fit_node_info(mut info: NodeInfo) -> NodeInfo {
     info.hostname = cut(hostname);
     info.os = cut(clean(&info.os));
     info.arch = cut(clean(&info.arch));
+    // A model with an odd name is left out rather than keeping the machine
+    // from pairing.
+    let mut seen = HashSet::new();
+    info.llm_models
+        .retain(|m| validate_model_name(m).is_ok() && seen.insert(m.clone()));
+    info.llm_models.truncate(MAX_LLM_MODELS);
     info
 }
 
@@ -165,7 +240,82 @@ mod tests {
             cpu_cores: 8,
             total_memory_bytes: 1 << 34,
             runners: vec![RunnerKind::Fake],
+            llm_models: vec![],
         }
+    }
+
+    fn llm(prompts: &[&str], start: u32, end: u32) -> TaskPayload {
+        TaskPayload::Llm {
+            model: "llama3.2:1b".into(),
+            prompts: prompts.iter().map(|p| (*p).to_owned()).collect(),
+            frame_start: start,
+            frame_end: end,
+        }
+    }
+
+    #[test]
+    fn llm_jobs_are_bounded() {
+        assert!(validate_payload(&llm(&["What is Rust?", "줄 바꿈도\n된다"], 1, 2)).is_ok());
+        assert!(validate_payload(&llm(&["a", "b", "c"], 2, 3)).is_ok());
+        assert!(validate_payload(&llm(&[], 1, 1)).is_err(), "no prompts");
+        assert!(
+            validate_payload(&llm(&["a"], 0, 1)).is_err(),
+            "numbers start at 1"
+        );
+        assert!(
+            validate_payload(&llm(&["a"], 1, 2)).is_err(),
+            "past the list"
+        );
+        assert!(
+            validate_payload(&llm(&["  "], 1, 1)).is_err(),
+            "blank prompt"
+        );
+        assert!(validate_payload(&llm(&["a\0b"], 1, 1)).is_err(), "NUL");
+        let long = "x".repeat(MAX_PROMPT_CHARS + 1);
+        assert!(
+            validate_payload(&llm(&[&long], 1, 1)).is_err(),
+            "long prompt"
+        );
+        let many = vec!["q"; MAX_PROMPTS + 1];
+        assert!(
+            validate_payload(&llm(&many, 1, 1)).is_err(),
+            "too many prompts"
+        );
+        let big = "y".repeat(MAX_PROMPT_CHARS);
+        let heavy = vec![big.as_str(); MAX_PROMPTS_BYTES / MAX_PROMPT_CHARS + 1];
+        assert!(
+            validate_payload(&llm(&heavy, 1, 1)).is_err(),
+            "too many bytes"
+        );
+    }
+
+    #[test]
+    fn model_names_are_plain() {
+        for ok in [
+            "llama3.2:1b",
+            "qwen2.5:0.5b",
+            "hf.co/org/model:Q4_K_M",
+            "mistral",
+        ] {
+            assert!(validate_model_name(ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "a b", "x;rm -rf /", "$(id)", "a\nb", &"m".repeat(101)] {
+            assert!(validate_model_name(bad).is_err(), "{bad:?}");
+        }
+        let mut machine = info("a", "host");
+        machine.llm_models = vec!["llama3.2:1b".into(), "llama3.2:1b".into()];
+        assert!(validate_node_info(&machine).is_err(), "duplicates");
+        machine.llm_models = vec!["bad name".into()];
+        assert!(validate_node_info(&machine).is_err());
+        machine.llm_models = vec![
+            "llama3.2:1b".into(),
+            "bad name".into(),
+            "llama3.2:1b".into(),
+        ];
+        assert_eq!(
+            fit_node_info(machine).llm_models,
+            vec!["llama3.2:1b".to_owned()]
+        );
     }
 
     #[test]
