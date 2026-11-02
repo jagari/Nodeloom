@@ -1,6 +1,6 @@
 # Nodeloom 베타 사용 안내
 
-팀 내부 베타(`v0.1.0-beta.2`)다. 기기 한 대가 클러스터를 운영하고(마스터), 나머지 기기가 거기에 참여한다(에이전트). 변경 내용은 [`CHANGELOG.md`](../CHANGELOG.md)에 있다.
+팀 내부 베타(`v0.1.0-beta.3`)다. 기기 한 대가 클러스터를 운영하고(마스터), 나머지 기기가 거기에 참여한다(에이전트). 변경 내용은 [`CHANGELOG.md`](../CHANGELOG.md)에 있다.
 
 - **PC(맥·윈도우·리눅스)**: 데스크톱 앱을 설치한다. 터미널을 쓰지 않는다.
 - **화면 없는 기기(라즈베리파이·Jetson·서버)**: 명령줄 버전을 설치한다(아래 "명령줄 버전").
@@ -9,15 +9,15 @@
 
 ## 1. 받기
 
-저장소가 비공개라 저장소 접근 권한이 있는 GitHub 계정이 필요하다. 저장소의 Releases에서 `v0.1.0-beta.2`를 열고, 기기에 맞는 파일을 받는다.
+저장소가 비공개라 저장소 접근 권한이 있는 GitHub 계정이 필요하다. 저장소의 Releases에서 `v0.1.0-beta.3`를 열고, 기기에 맞는 파일을 받는다.
 
 | 기기 | 데스크톱 앱 | 명령줄 버전 |
 |---|---|---|
-| macOS (Apple Silicon) | `nodeloom-desktop-0.1.0-beta.2-macos-arm64.dmg` | `nodeloom-0.1.0-beta.2-macos-arm64.tar.gz` |
-| Windows (대부분의 PC) | `nodeloom-desktop-0.1.0-beta.2-windows-x64.exe` | `nodeloom-0.1.0-beta.2-windows-x64.zip` |
-| Windows on ARM (Surface Pro X·Copilot+ PC 등) | `nodeloom-desktop-0.1.0-beta.2-windows-arm64.exe` | `nodeloom-0.1.0-beta.2-windows-arm64.zip` |
-| Linux PC (Ubuntu 22.04 이상, Debian 12 이상) | `nodeloom-desktop-0.1.0-beta.2-linux-x64.deb` | `nodeloom-0.1.0-beta.2-linux-x64.tar.gz` |
-| 라즈베리파이 4·5(64비트 OS), Jetson | (`linux-arm64.deb`, 화면이 있을 때) | `nodeloom-0.1.0-beta.2-linux-arm64.tar.gz` |
+| macOS (Apple Silicon) | `nodeloom-desktop-0.1.0-beta.3-macos-arm64.dmg` | `nodeloom-0.1.0-beta.3-macos-arm64.tar.gz` |
+| Windows (대부분의 PC) | `nodeloom-desktop-0.1.0-beta.3-windows-x64.exe` | `nodeloom-0.1.0-beta.3-windows-x64.zip` |
+| Windows on ARM (Surface Pro X·Copilot+ PC 등) | `nodeloom-desktop-0.1.0-beta.3-windows-arm64.exe` | `nodeloom-0.1.0-beta.3-windows-arm64.zip` |
+| Linux PC (Ubuntu 22.04 이상, Debian 12 이상) | `nodeloom-desktop-0.1.0-beta.3-linux-x64.deb` | `nodeloom-0.1.0-beta.3-linux-x64.tar.gz` |
+| 라즈베리파이 4·5(64비트 OS), Jetson | (`linux-arm64.deb`, 화면이 있을 때) | `nodeloom-0.1.0-beta.3-linux-arm64.tar.gz` |
 
 Intel Mac과 32비트 라즈베리파이 OS용 빌드는 아직 없다.
 
@@ -42,7 +42,7 @@ Intel Mac과 32비트 라즈베리파이 OS용 빌드는 아직 없다.
 **Linux**
 
 ```sh
-sudo apt install ./nodeloom-desktop-0.1.0-beta.2-linux-x64.deb
+sudo apt install ./nodeloom-desktop-0.1.0-beta.3-linux-x64.deb
 ```
 
 앱 목록에서 Nodeloom을 연다. 트레이 아이콘은 Ubuntu 기본 데스크톱에서 보인다. 다른 GNOME 환경은 AppIndicator 확장이 필요할 수 있다.
@@ -61,6 +61,22 @@ sudo apt install ./nodeloom-desktop-0.1.0-beta.2-linux-x64.deb
 "Start Nodeloom when I log in"을 켜 두면 로그인할 때 트레이에서 조용히 시작한다.
 
 창을 닫아도 트레이에서 계속 돈다. 완전히 끄려면 트레이 메뉴 → **Quit Nodeloom**을 누른다. 역할을 바꾸려면 Settings → **Change role…**을 누른다. 승인된 기기 목록과 이 기기의 신원은 그대로 남는다.
+
+## 기기 추가하기 (마스터를 맡은 사람용)
+
+대시보드의 **Add a machine** 카드에 같은 내용이 있다. 기기가 하나뿐이면 펼쳐져 있다.
+
+1. 추가할 컴퓨터에 같은 설치 파일로 Nodeloom을 설치하고 연다.
+2. **Join a cluster**를 고른다. 같은 네트워크면 클러스터를 스스로 찾는다.
+3. 마스터 대시보드의 **Waiting for approval**에 6자리 코드가 뜬다. 그 컴퓨터 화면의 코드와 같으면 **Approve**를 누른다.
+
+**10초가 지나도 안 뜰 때**
+
+- 두 컴퓨터가 같은 네트워크인지 본다. 게스트 와이파이, VPN, 회사·학교의 격리된 와이파이에서는 서로 보이지 않는다. 시연할 때는 휴대폰 핫스팟이나 공유기 하나에 모두 붙이는 것이 가장 확실하다.
+- 윈도우: 방화벽 창에서 허용을 눌렀는지 본다. 네트워크가 "공용(Public)"이면 설정 → 네트워크 및 인터넷 → 속성에서 **개인(Private)**으로 바꾼다. 마스터와 참여 기기 모두 해당된다.
+- 그래도 안 되면 주소를 직접 넣는다.
+  - 추가할 컴퓨터의 앱 화면에서 **Enter the address**에, 마스터 대시보드의 Add a machine 카드에 나온 주소(예: `192.168.0.12:7878`)를 넣고 **Join this address**를 누른다.
+  - 승인은 똑같이 대시보드에서 한다.
 
 ## 4. 작업 보내 보기
 
@@ -89,8 +105,8 @@ sudo apt install ./nodeloom-desktop-0.1.0-beta.2-linux-x64.deb
 macOS·Linux:
 
 ```sh
-tar -xzf nodeloom-0.1.0-beta.2-<기기>.tar.gz
-cd nodeloom-0.1.0-beta.2-<기기>
+tar -xzf nodeloom-0.1.0-beta.3-<기기>.tar.gz
+cd nodeloom-0.1.0-beta.3-<기기>
 ./install.sh
 ```
 
@@ -100,8 +116,8 @@ cd nodeloom-0.1.0-beta.2-<기기>
 Windows (PowerShell):
 
 ```powershell
-Expand-Archive nodeloom-0.1.0-beta.2-windows-x64.zip
-cd nodeloom-0.1.0-beta.2-windows-x64\nodeloom-0.1.0-beta.2-windows-x64
+Expand-Archive nodeloom-0.1.0-beta.3-windows-x64.zip
+cd nodeloom-0.1.0-beta.3-windows-x64\nodeloom-0.1.0-beta.3-windows-x64
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
@@ -122,7 +138,8 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 | 증상 | 할 일 |
 |---|---|
-| 앱이 "Looking for a master…"에서 멈춤 | 클러스터를 운영하는 기기에서 Nodeloom이 켜져 있는지 본다. 다른 서브넷·VPN·게스트 와이파이에서는 자동 탐색이 안 된다. 그런 경우에는 명령줄 에이전트의 `--master <IP>:7878`을 쓴다 |
+| 앱이 "Looking for a master…"에서 멈춤 | 위 "기기 추가하기"의 확인 순서를 따른다. 마지막 방법은 **Enter the address**에 마스터 주소를 넣는 것이다 |
+| 윈도우에서 앱이 안 열리거나 오래 걸림 | beta.3으로 업데이트한다(역할 선택 후 앱이 사라지던 문제와 트레이 Settings 멈춤을 고쳤다). 계속되면 앱 설정 화면에 나오는 로그 파일(`%LOCALAPPDATA%\nodeloom\logs\desktop.log`)을 이슈에 붙인다 |
 | 앱이 "port 7878 is already in use"로 시작하지 못함 | 같은 기기에서 명령줄 `nodeloom-master`가 돌고 있다. 그것을 끄거나, 앱의 역할을 "Join a cluster"로 바꾼다 |
 | 대시보드가 "Wrong admin token" | 마스터 데이터 폴더의 `admin-token` 값을 넣는다. 잃어버렸으면 마스터를 멈추고 `nodeloom-master --rotate-admin-token`으로 새로 만든다 |
 | 다른 기기에서 대시보드가 열리지 않음 | 마스터 기기의 방화벽이 7878 포트를 막지 않는지 확인한다 |

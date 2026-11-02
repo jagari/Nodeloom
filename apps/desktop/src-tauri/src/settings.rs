@@ -19,6 +19,42 @@ pub enum Role {
 pub struct Settings {
     /// `None` until the user picks one on the first screen.
     pub role: Option<Role>,
+    /// `host:port` of the master to join, typed by the user when discovery
+    /// does not find it. `None` means find it on the network.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub master: Option<String>,
+}
+
+/// Turns what someone typed ("192.168.0.12", "http://mac.local:7878/")
+/// into `host:port`, the default port filled in.
+pub fn master_address(input: &str) -> Result<String, String> {
+    let mut rest = input.trim();
+    for scheme in ["http://", "https://", "ws://", "wss://"] {
+        if let Some(stripped) = rest.strip_prefix(scheme) {
+            rest = stripped;
+        }
+    }
+    let rest = rest.split('/').next().unwrap_or("");
+    let invalid = || {
+        format!(
+            "\"{}\" is not an address like 192.168.0.12:7878",
+            input.trim()
+        )
+    };
+    if rest.is_empty() || rest.chars().any(|c| c.is_whitespace() || c == '@') {
+        return Err(invalid());
+    }
+    let (host, port) = match rest.rsplit_once(':') {
+        // A bare IPv6 address has colons but no port.
+        Some((host, port)) if !host.contains(':') || host.ends_with(']') => {
+            (host, port.parse::<u16>().map_err(|_| invalid())?)
+        }
+        _ => (rest, nodeloom_proto::DEFAULT_PORT),
+    };
+    if host.is_empty() || port == 0 {
+        return Err(invalid());
+    }
+    Ok(format!("{host}:{port}"))
 }
 
 /// Reads the settings. A missing file is a first run. A damaged one is
@@ -62,11 +98,54 @@ mod tests {
 
         let chosen = Settings {
             role: Some(Role::Agent),
+            master: Some("192.168.0.12:7878".into()),
         };
         save(&path, &chosen).unwrap();
         assert_eq!(load(&path), chosen);
         save(&path, &Settings::default()).unwrap();
         assert_eq!(load(&path).role, None);
+    }
+
+    #[test]
+    fn typed_master_addresses_become_host_and_port() {
+        assert_eq!(
+            master_address(" 192.168.0.12 ").unwrap(),
+            "192.168.0.12:7878"
+        );
+        assert_eq!(
+            master_address("192.168.0.12:9000").unwrap(),
+            "192.168.0.12:9000"
+        );
+        assert_eq!(
+            master_address("http://mac.local:7878/").unwrap(),
+            "mac.local:7878"
+        );
+        assert_eq!(master_address("[fe80::1]:7878").unwrap(), "[fe80::1]:7878");
+        for bad in [
+            "",
+            "   ",
+            "192.168.0.12:port",
+            "a b:7878",
+            "host:0",
+            "user@host",
+            ":7878",
+        ] {
+            assert!(master_address(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn settings_from_before_the_address_still_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, br#"{"role":"master"}"#).unwrap();
+        assert_eq!(
+            load(&path),
+            Settings {
+                role: Some(Role::Master),
+                master: None
+            }
+        );
     }
 
     #[test]

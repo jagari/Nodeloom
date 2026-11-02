@@ -32,6 +32,13 @@ export function parseEndpoint(input: string): Endpoint | null {
   };
 }
 
+/** `GET /api/info`: mirrors `MasterInfo` in nodeloom-master's server.rs. */
+export interface MasterInfo {
+  version: string;
+  /** `ip:port` other machines can join at when discovery does not find the master. */
+  join_address: string;
+}
+
 export interface ClientHandlers {
   onSnapshot(snapshot: ClusterSnapshot): void;
   onStatus(status: ConnectionStatus): void;
@@ -80,6 +87,17 @@ export class ClusterClient {
   /** Removes a paired machine for good. */
   async removeDevice(id: NodeId): Promise<void> {
     await this.request('DELETE', `/api/devices/${encodeURIComponent(id)}`, undefined, 'That machine is not paired.');
+  }
+
+  /** How to reach this master; null from a master too old to say. */
+  async info(): Promise<MasterInfo | null> {
+    try {
+      const response = await this.request('GET', '/api/info', undefined, 'old master');
+      return (await response.json()) as MasterInfo;
+    } catch (e) {
+      if (e instanceof Error && e.message === 'old master') return null;
+      throw e;
+    }
   }
 
   /** Sends an authorized request; throws with the master's explanation. */

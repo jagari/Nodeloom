@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
-  import { describeAgent, type AppView, type Role, type Tone } from '../lib/app';
+  import { describeAgent, masterHost, offerAddress, type AppView, type Role, type Tone } from '../lib/app';
 
   let view = $state<AppView | null>(null);
   let problem = $state('');
@@ -10,6 +10,7 @@
   let picked = $state<Role>('master');
   let startAtLogin = $state(true);
   let confirmingChange = $state(false);
+  let typedAddress = $state('');
 
   async function refresh() {
     try {
@@ -42,8 +43,14 @@
 
   const chooseRole = (role: Role | null, autostart?: boolean) => run('choose_role', { role, autostart });
   const setAutostart = (enabled: boolean) => run('set_autostart', { enabled });
+  const setAddress = (address: string | null) => run('set_master_address', { address });
 
   const agent = $derived(view?.agent ? describeAgent(view.agent) : null);
+  const askAddress = $derived(
+    view?.role === 'agent' && view.agent !== null && offerAddress(view.agent, view.master_address),
+  );
+  // http://192.168.0.12:7878/ → 192.168.0.12:7878, what other machines type in.
+  const joinAddress = $derived(view?.master ? masterHost(view.master.lan_url) : '');
   const toneLabel: Record<Tone, string> = {
     busy: 'Working',
     waiting: 'Waiting',
@@ -110,6 +117,16 @@
           <p class="muted">From another device on this network, open</p>
           <code>{view.master.lan_url}</code>
         </section>
+        <section>
+          <h2>Add a machine</h2>
+          <ol>
+            <li>Install Nodeloom on the other computer and open it.</li>
+            <li>Choose <strong>Join a cluster</strong>.</li>
+            <li>Approve it in the dashboard if its code matches.</li>
+          </ol>
+          <p class="muted">If it keeps looking, type this address on it:</p>
+          <code>{joinAddress}</code>
+        </section>
       {/if}
 
       {#if agent}
@@ -133,6 +150,35 @@
           {#if agent.detail}<p class="muted">{agent.detail}</p>{/if}
           {#if agent.removed}
             <button class="btn" disabled={busy} onclick={() => run('reset_identity')}>Pair as a new machine</button>
+          {/if}
+          {#if askAddress}
+            <form
+              class="address"
+              onsubmit={(e) => {
+                e.preventDefault();
+                setAddress(typedAddress);
+              }}
+            >
+              {#if view.master_address}
+                <p class="muted">Joining the address you entered: <code>{view.master_address}</code></p>
+              {:else}
+                <p class="muted">
+                  Not found? Type the address shown on the master's dashboard under <strong>Add a machine</strong>.
+                </p>
+              {/if}
+              <label class="field">
+                <span>Enter the address</span>
+                <input bind:value={typedAddress} placeholder="192.168.0.12:7878" spellcheck="false" required />
+              </label>
+              <div class="row">
+                <button class="btn primary" type="submit" disabled={busy}>Join this address</button>
+                {#if view.master_address}
+                  <button class="btn" type="button" disabled={busy} onclick={() => setAddress(null)}>
+                    Find automatically
+                  </button>
+                {/if}
+              </div>
+            </form>
           {/if}
           {#if view.code && view.role === 'agent'}
             <p class="code-line">
@@ -166,6 +212,9 @@
           </div>
         {/if}
         {#if problem}<p class="problem" role="alert">{problem}</p>{/if}
+        {#if view.log_file}
+          <p class="muted log">Log file (attach it to bug reports): <code>{view.log_file}</code></p>
+        {/if}
       </section>
     </div>
   {/if}
@@ -245,6 +294,19 @@
     display: flex;
     gap: 8px;
     align-items: center;
+  }
+  .address {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-self: stretch;
+  }
+  ol {
+    margin: 0;
+    padding-left: 20px;
+  }
+  .log {
+    font-size: 12px;
   }
   .row {
     display: flex;

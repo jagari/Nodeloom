@@ -57,14 +57,19 @@ pub fn load_admin_token(dir: &Path, rotate: bool) -> io::Result<(String, bool)> 
 /// would use to leave the machine; connecting a UDP socket sends nothing.
 pub fn dashboard_url(addr: SocketAddr) -> String {
     let ip = if addr.ip().is_unspecified() {
-        UdpSocket::bind("0.0.0.0:0")
-            .and_then(|s| s.connect("192.0.2.1:9").and_then(|()| s.local_addr()))
-            .map(|a| a.ip())
-            .unwrap_or(IpAddr::from([127, 0, 0, 1]))
+        lan_ip()
     } else {
         addr.ip()
     };
     format!("http://{}/", SocketAddr::new(ip, addr.port()))
+}
+
+/// This machine's address on the local network (loopback if it has none).
+pub fn lan_ip() -> IpAddr {
+    UdpSocket::bind("0.0.0.0:0")
+        .and_then(|s| s.connect("192.0.2.1:9").and_then(|()| s.local_addr()))
+        .map(|a| a.ip())
+        .unwrap_or(IpAddr::from([127, 0, 0, 1]))
 }
 
 #[cfg(test)]

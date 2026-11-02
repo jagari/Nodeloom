@@ -15,7 +15,11 @@
 //! [`handshake`]). Traffic is plain HTTP/WS for now; do not expose the port
 //! beyond a trusted network.
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
 use axum::{
     Extension, Json, Router,
@@ -26,7 +30,7 @@ use axum::{
     },
     http::{
         HeaderMap, Method, StatusCode,
-        header::{AUTHORIZATION, CONTENT_TYPE, ORIGIN},
+        header::{AUTHORIZATION, CONTENT_TYPE, HOST, ORIGIN},
     },
     response::{IntoResponse, Response},
     routing::{delete, get, post},
@@ -36,10 +40,10 @@ use nodeloom_core::{
     validate::validate_node_info,
 };
 use nodeloom_proto::{
-    AgentMessage, ClusterSnapshot, JobView, MasterMessage, NodeId, NodeInfo, PROTOCOL_VERSION,
-    SubmitJob,
+    AgentMessage, ClusterSnapshot, DEFAULT_PORT, JobView, MasterMessage, NodeId, NodeInfo,
+    PROTOCOL_VERSION, SubmitJob,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::{
     net::TcpListener,
     sync::{mpsc, oneshot},
@@ -61,6 +65,7 @@ const UI_PUSH_DELAY: Duration = Duration::from_millis(100);
 pub fn router(cluster: Arc<Cluster>) -> Router {
     Router::new()
         .route("/api/state", get(get_state))
+        .route("/api/info", get(get_info))
         .route("/api/jobs", post(post_job))
         .route("/api/pending/{public_key}/approve", post(approve_pending))
         .route("/api/pending/{public_key}/ignore", post(ignore_pending))
@@ -115,6 +120,46 @@ async fn get_state(
         return Err(StatusCode::UNAUTHORIZED);
     }
     Ok(Json(cluster.snapshot()))
+}
+
+/// What the dashboard needs to tell people how to add a machine.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MasterInfo {
+    pub version: String,
+    /// `ip:port` other machines can join at, for when discovery does not
+    /// find this master (another subnet, a firewall, a guest network).
+    pub join_address: String,
+}
+
+async fn get_info(
+    State(cluster): State<Arc<Cluster>>,
+    headers: HeaderMap,
+) -> Result<Json<MasterInfo>, StatusCode> {
+    if !authorized(&cluster, bearer(&headers)) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(Json(MasterInfo {
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        join_address: join_address(headers.get(HOST).and_then(|h| h.to_str().ok())),
+    }))
+}
+
+/// The address the dashboard reached this master at says which port it
+/// listens on, and which IP works if the dashboard runs on another machine.
+/// Opened on the master itself (loopback, or a name), the LAN address is
+/// the useful one.
+fn join_address(host: Option<&str>) -> String {
+    let (name, port) = match host.and_then(|h| h.rsplit_once(':')) {
+        Some((name, port)) if port.parse::<u16>().is_ok() => {
+            (name, port.parse().unwrap_or(DEFAULT_PORT))
+        }
+        _ => (host.unwrap_or(""), DEFAULT_PORT),
+    };
+    let ip = match name.trim_matches(['[', ']']).parse::<IpAddr>() {
+        Ok(ip) if !ip.is_loopback() && !ip.is_unspecified() => ip,
+        _ => crate::lan_ip(),
+    };
+    SocketAddr::new(ip, port).to_string()
 }
 
 async fn post_job(
@@ -507,5 +552,24 @@ fn handle_agent_message(cluster: &Cluster, node: &NodeId, msg: AgentMessage) {
         } => cluster.task_progress(node, task_id, frames_done),
         AgentMessage::TaskDone { task_id } => cluster.task_done(node, task_id),
         AgentMessage::TaskFailed { task_id, error } => cluster.task_failed(node, task_id, error),
+    }
+}
+
+#[cfg(test)]
+mod join_address_tests {
+    use super::join_address;
+
+    #[test]
+    fn a_dashboard_on_another_machine_names_the_address_it_used() {
+        assert_eq!(join_address(Some("192.168.0.12:7878")), "192.168.0.12:7878");
+        assert_eq!(join_address(Some("10.0.0.5:9000")), "10.0.0.5:9000");
+    }
+
+    #[test]
+    fn on_the_master_itself_the_lan_address_keeps_the_port() {
+        let lan = crate::lan_ip().to_string();
+        assert_eq!(join_address(Some("127.0.0.1:7979")), format!("{lan}:7979"));
+        assert_eq!(join_address(Some("localhost:7878")), format!("{lan}:7878"));
+        assert_eq!(join_address(None), format!("{lan}:7878"));
     }
 }

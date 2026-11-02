@@ -18,8 +18,11 @@ export interface AppView {
   code: string | null;
   agent: AgentStatus | null;
   master: { lan_url: string } | null;
+  /** Set when this machine joins a typed address instead of searching. */
+  master_address: string | null;
   autostart: boolean;
   error: string | null;
+  log_file: string | null;
 }
 
 /**
@@ -32,6 +35,15 @@ export interface AppView {
 export function inDesktopApp(w: object, place: { protocol: string; hostname: string }, dev: boolean): boolean {
   const ownFiles = place.protocol === 'tauri:' || place.hostname === 'tauri.localhost' || dev;
   return ownFiles && '__TAURI_INTERNALS__' in w;
+}
+
+/**
+ * Whether to offer typing the master's address: while nothing is found or
+ * joining fails, and always once one is typed (to change or clear it).
+ */
+export function offerAddress(status: AgentStatus, typed: string | null): boolean {
+  if (typed) return true;
+  return status.state === 'searching' || (status.state === 'connecting' && status.last_error !== null);
 }
 
 /** `ws://192.168.1.5:7878/ws/agent` → `192.168.1.5:7878`. */

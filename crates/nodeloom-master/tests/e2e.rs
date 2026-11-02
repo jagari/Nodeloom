@@ -655,6 +655,30 @@ async fn silent_pending_connections_are_dropped() {
 }
 
 #[tokio::test]
+async fn info_tells_the_dashboard_where_machines_can_join() {
+    let h = start_master().await;
+    let url = format!("{}/api/info", h.base);
+    let anonymous = reqwest::get(&url).await.unwrap();
+    assert_eq!(anonymous.status().as_u16(), 401);
+
+    let info: nodeloom_master::server::MasterInfo = reqwest::Client::new()
+        .get(&url)
+        .header("Authorization", h.bearer())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    // Opened over loopback here, so the answer is this machine's LAN
+    // address with the port the master really listens on.
+    let port = h.base.rsplit(':').next().unwrap();
+    assert!(info.join_address.ends_with(&format!(":{port}")), "{info:?}");
+    assert!(!info.join_address.starts_with("127."), "{info:?}");
+    assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
+}
+
+#[tokio::test]
 async fn ui_endpoints_require_the_token() {
     let h = start_master().await;
     let client = reqwest::Client::new();

@@ -42,6 +42,11 @@ pub struct Options {
     pub dirs: Dirs,
     pub port: u16,
     pub mdns: bool,
+    /// How long to keep trying a port that is in use. Right after a
+    /// restart the previous process may still be letting go of it.
+    pub port_wait: Duration,
+    /// An agent joins this `host:port` instead of looking on the network.
+    pub master: Option<String>,
 }
 
 impl Options {
@@ -50,6 +55,8 @@ impl Options {
             dirs: Dirs::standard()?,
             port: DEFAULT_PORT,
             mdns: true,
+            port_wait: Duration::from_secs(5),
+            master: None,
         })
     }
 }
@@ -99,12 +106,14 @@ pub async fn start(role: Role, options: Options) -> Result<Running> {
             let dir = &options.dirs.master_data;
             let store = DeviceStore::open(dir)?;
             let bind = SocketAddr::from((Ipv4Addr::UNSPECIFIED, options.port));
-            let listener = TcpListener::bind(bind).await.with_context(|| {
-                format!(
-                    "port {} is already in use; is another Nodeloom master running?",
-                    options.port
-                )
-            })?;
+            let listener = bind_waiting(bind, options.port_wait)
+                .await
+                .with_context(|| {
+                    format!(
+                        "port {} is already in use; is another Nodeloom master running?",
+                        options.port
+                    )
+                })?;
             let addr = listener.local_addr()?;
             let (token, _) = load_admin_token(dir, false)
                 .with_context(|| format!("admin token in {}", dir.display()))?;
@@ -150,13 +159,24 @@ pub async fn start(role: Role, options: Options) -> Result<Running> {
             (Some(info), advertisement)
         }
         Role::Agent => {
+            let typed = options.master.clone();
+            if let Some(master) = &typed {
+                status_tx.send_replace(AgentStatus::Connecting {
+                    master: format!("ws://{master}/ws/agent"),
+                    last_error: None,
+                });
+            }
             tasks.push(tokio::spawn(async move {
-                let master = find_master_forever().await;
+                let master = match typed {
+                    Some(master) => master,
+                    None => find_master_forever().await,
+                };
                 run_forever(AgentConfig {
                     master_url: format!("ws://{master}/ws/agent"),
                     identity: me,
                     // Never a token here: the master was found by discovery,
-                    // which anyone on the network can answer.
+                    // which anyone on the network can answer, or typed in;
+                    // either way the dashboard approves this machine.
                     token: None,
                     runners,
                     metrics_interval: Duration::from_secs(1),
@@ -175,6 +195,21 @@ pub async fn start(role: Role, options: Options) -> Result<Running> {
         tasks,
         _advertisement: advertisement,
     })
+}
+
+async fn bind_waiting(addr: SocketAddr, wait: Duration) -> std::io::Result<TcpListener> {
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        match TcpListener::bind(addr).await {
+            Err(e)
+                if e.kind() == std::io::ErrorKind::AddrInUse
+                    && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            result => return result,
+        }
+    }
 }
 
 /// Unlike the command-line agent, which gives up after 30 seconds, the app
@@ -203,6 +238,8 @@ mod tests {
             },
             port: 0,
             mdns: false,
+            port_wait: Duration::ZERO,
+            master: None,
         }
     }
 
@@ -262,6 +299,89 @@ mod tests {
         options.port = taken.local_addr().unwrap().port();
         let error = start(Role::Master, options).await.err().unwrap();
         assert!(format!("{error:#}").contains("already in use"));
+    }
+
+    #[tokio::test]
+    async fn a_port_freed_during_the_wait_is_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let taken = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+        let mut options = options_in(dir.path());
+        options.port = taken.local_addr().unwrap().port();
+        options.port_wait = Duration::from_secs(5);
+        // The previous process lets go of the port shortly after we start.
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            drop(taken);
+        });
+        let running = start(Role::Master, options).await.unwrap();
+        release.join().unwrap();
+        assert!(running.master.is_some());
+    }
+
+    #[tokio::test]
+    async fn an_agent_with_a_typed_address_joins_it_after_approval() {
+        let dir = tempfile::tempdir().unwrap();
+        let master_dir = tempfile::tempdir().unwrap();
+        let master = start(Role::Master, options_in(master_dir.path()))
+            .await
+            .unwrap();
+        let info = master.master.clone().unwrap();
+        let address = info
+            .local_url
+            .trim_start_matches("http://")
+            .trim_end_matches('/')
+            .to_owned();
+
+        let mut options = options_in(dir.path());
+        options.master = Some(address.clone());
+        let mut agent = start(Role::Agent, options).await.unwrap();
+        let waiting = tokio::time::timeout(
+            Duration::from_secs(10),
+            agent
+                .agent
+                .wait_for(|s| matches!(s, AgentStatus::WaitingForApproval { .. })),
+        )
+        .await;
+        assert!(
+            waiting.is_ok_and(|r| r.is_ok()),
+            "{:?}",
+            *agent.agent.borrow()
+        );
+
+        // Approve it the way the dashboard does.
+        let client = reqwest::Client::new();
+        let state: serde_json::Value = client
+            .get(format!("{}api/state", info.local_url))
+            .bearer_auth(&info.token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let key = state["pending"][0]["public_key"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let approved = client
+            .post(format!("{}api/pending/{key}/approve", info.local_url))
+            .bearer_auth(&info.token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(approved.status().as_u16(), 204);
+        let joined = tokio::time::timeout(
+            Duration::from_secs(10),
+            agent
+                .agent
+                .wait_for(|s| matches!(s, AgentStatus::Joined { .. })),
+        )
+        .await;
+        assert!(
+            joined.is_ok_and(|r| r.is_ok()),
+            "{:?}",
+            *agent.agent.borrow()
+        );
     }
 
     #[tokio::test]
