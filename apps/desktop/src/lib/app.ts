@@ -38,6 +38,15 @@ export function inDesktopApp(w: object, place: { protocol: string; hostname: str
 }
 
 /**
+ * True on Windows, where the first listening port raises a firewall prompt
+ * and a "Public" network blocks other machines even when allowed. Decided
+ * from `navigator.userAgent`, which reads "Windows NT" in WebView2.
+ */
+export function onWindows(userAgent: string): boolean {
+  return /Windows/i.test(userAgent);
+}
+
+/**
  * Whether to offer typing the master's address: while nothing is found or
  * joining fails, and always once one is typed (to change or clear it).
  */

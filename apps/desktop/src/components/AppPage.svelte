@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
-  import { describeAgent, masterHost, offerAddress, type AppView, type Role, type Tone } from '../lib/app';
+  import { describeAgent, masterHost, offerAddress, onWindows, type AppView, type Role, type Tone } from '../lib/app';
 
   let view = $state<AppView | null>(null);
   let problem = $state('');
@@ -51,6 +51,8 @@
   );
   // http://192.168.0.12:7878/ → 192.168.0.12:7878, what other machines type in.
   const joinAddress = $derived(view?.master ? masterHost(view.master.lan_url) : '');
+  // Windows asks about the firewall the first time a port opens; see app.ts.
+  const windows = onWindows(navigator.userAgent);
   const toneLabel: Record<Tone, string> = {
     busy: 'Working',
     waiting: 'Waiting',
@@ -108,6 +110,13 @@
 
       {#if view.error}
         <p class="problem" role="alert">Could not start: {view.error}</p>
+      {/if}
+
+      {#if windows}
+        <p class="hint">
+          If other computers can't find this one: allow Nodeloom in Windows Firewall, and set this network to
+          <strong>Private</strong>.
+        </p>
       {/if}
 
       {#if view.master}
@@ -340,6 +349,12 @@
     font-weight: 700;
     letter-spacing: 0.08em;
     font-variant-numeric: tabular-nums;
+  }
+  .hint {
+    font-size: 13px;
+    color: var(--ink-2);
+    border-left: 3px solid var(--warning);
+    padding: 4px 0 4px 10px;
   }
   .problem {
     display: flex;
