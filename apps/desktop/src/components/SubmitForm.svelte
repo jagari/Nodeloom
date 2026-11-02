@@ -1,6 +1,7 @@
 <script lang="ts">
   import { DEMO_JOB } from '../lib/jobs';
-  import type { JobView, NodeView, RunnerKind, TaskPayload } from '../lib/types';
+  import { availableModels, llmJob, parsePrompts, promptProblem, SAMPLE_PROMPTS } from '../lib/llm';
+  import type { JobView, NodeView, TaskPayload } from '../lib/types';
 
   interface Props {
     nodes: NodeView[];
@@ -9,10 +10,10 @@
   let { nodes, submit }: Props = $props();
 
   const available = $derived(
-    (['blender', 'fake'] as RunnerKind[]).filter((r) => nodes.some((n) => n.info.runners.includes(r))),
+    (['blender', 'fake'] as const).filter((r) => nodes.some((n) => n.info.runners.includes(r))),
   );
 
-  let runner = $state<RunnerKind>('blender');
+  let runner = $state<'blender' | 'fake'>('blender');
   let blendFile = $state('scene.blend');
   let frameStart = $state(1);
   let frameEnd = $state(250);
@@ -38,6 +39,17 @@
   const demoSeconds = $derived(
     demoMachines === 0 ? 0 : Math.ceil((DEMO_JOB.frame_end - DEMO_JOB.frame_start + 1) * 0.05 / demoMachines),
   );
+
+  // Local AI: models installed on the connected machines.
+  const models = $derived(availableModels(nodes));
+  let model = $state('');
+  $effect(() => {
+    if (models.length > 0 && !models.some((m) => m.model === model)) model = models[0]!.model;
+  });
+  let promptText = $state(SAMPLE_PROMPTS.join('\n'));
+  const prompts = $derived(parsePrompts(promptText));
+  const problem = $derived(promptProblem(prompts));
+  const aiMachines = $derived(models.find((m) => m.model === model)?.machines ?? 0);
 
   async function send(payload: TaskPayload) {
     error = '';
@@ -77,6 +89,53 @@
     <button class="btn primary big" type="button" disabled={busy || !!demoBlocked} onclick={() => send(DEMO_JOB)}>
       {busy ? 'Starting…' : 'Demo job'}
     </button>
+  </div>
+  <div class="demo ai">
+    <div class="ai-text">
+      <h3>Ask the local AI</h3>
+      {#if models.length === 0}
+        <p class="muted">
+          No machine runs a local LLM yet. Install <a href="https://ollama.com/download" target="_blank" rel="noreferrer"
+            >Ollama</a
+          >
+          and a model on the machines (for example <code>ollama pull llama3.2:1b</code>), then restart Nodeloom there.
+        </p>
+      {:else}
+        <p class="muted">
+          {prompts.length} question{prompts.length === 1 ? '' : 's'} split across {aiMachines} machine{aiMachines === 1
+            ? ''
+            : 's'}; each answers with its own model.
+        </p>
+        <div class="ai-fields">
+          <label class="field">
+            <span>Model</span>
+            <select bind:value={model}>
+              {#each models as m (m.model)}
+                <option value={m.model}>{m.model} · {m.machines} machine{m.machines === 1 ? '' : 's'}</option>
+              {/each}
+            </select>
+          </label>
+          <details class="questions">
+            <summary>Questions ({prompts.length})</summary>
+            <label class="field">
+              <span>One question per line</span>
+              <textarea rows="8" bind:value={promptText} spellcheck="false"></textarea>
+            </label>
+          </details>
+        </div>
+        {#if problem}<p class="error" role="alert">{problem}</p>{/if}
+      {/if}
+    </div>
+    {#if models.length > 0}
+      <button
+        class="btn primary big"
+        type="button"
+        disabled={busy || !!problem || !model}
+        onclick={() => send(llmJob(model, prompts))}
+      >
+        {busy ? 'Starting…' : 'Ask the AI'}
+      </button>
+    {/if}
   </div>
   <details>
     <summary>Custom job</summary>
@@ -138,6 +197,51 @@
   .big {
     font-size: 16px;
     padding: 10px 22px;
+  }
+  .ai {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--grid);
+    align-items: flex-start;
+  }
+  .ai-text {
+    flex: 1 1 320px;
+    min-width: 0;
+  }
+  h3 {
+    margin: 0 0 4px;
+    font-size: 15px;
+  }
+  .ai-fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 10px;
+    align-items: flex-start;
+  }
+  .questions {
+    flex: 1 1 260px;
+    margin-top: 0;
+    border-top: 0;
+    padding-top: 0;
+  }
+  .questions summary {
+    margin-bottom: 6px;
+  }
+  textarea {
+    width: 100%;
+    background: var(--page);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 10px;
+    font: inherit;
+    color: inherit;
+    resize: vertical;
+  }
+  code {
+    background: var(--page);
+    padding: 1px 5px;
+    border-radius: 4px;
   }
   details {
     margin-top: 12px;

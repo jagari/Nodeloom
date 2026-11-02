@@ -15,6 +15,7 @@ use nodeloom_agent::{AgentConfig, AgentStatus, identity, run_forever};
 use nodeloom_core::{FakeRunner, RunnerSet, discovery, metrics::hostname};
 use nodeloom_master::{Cluster, DeviceStore, dashboard_url, load_admin_token, serve};
 use nodeloom_proto::DEFAULT_PORT;
+use nodeloom_runner_llm::{self as llm_runner, LlmRunner};
 use tokio::{net::TcpListener, sync::watch, task::JoinHandle};
 use tracing::{info, warn};
 
@@ -96,9 +97,12 @@ pub async fn start(role: Role, options: Options) -> Result<Running> {
     let me = identity::load_or_create(&options.dirs.agent_state)?;
     let code = me.confirmation_code();
     let (status_tx, agent) = watch::channel(AgentStatus::Searching);
-    // There is nothing else to run yet: Whisper (#26) will be the first
-    // real plugin. The test runner only sleeps.
-    let runners = RunnerSet::new().with(Arc::new(FakeRunner));
+    // The test runner only sleeps, so every machine can show work; a
+    // machine running a local LLM (Ollama with a model) answers prompts too.
+    let mut runners = RunnerSet::new().with(Arc::new(FakeRunner));
+    if let Some(llm) = LlmRunner::detect(llm_runner::DEFAULT_URL).await {
+        runners = runners.with(Arc::new(llm));
+    }
     let mut tasks = Vec::new();
 
     let (master, advertisement) = match role {

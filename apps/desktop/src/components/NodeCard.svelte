@@ -2,6 +2,7 @@
   import { formatBytes, formatPercent } from '../lib/format';
   import type { Sample } from '../lib/history';
   import type { CurrentWork } from '../lib/jobs';
+  import { unitWord } from '../lib/llm';
   import type { NodeView } from '../lib/types';
   import Meter from './Meter.svelte';
   import Sparkline from './Sparkline.svelte';
@@ -41,7 +42,7 @@
     {#each work as w (w.task_id)}
       <div class="task">
         <div class="task-head">
-          <span>Job {w.job_id + 1} · <strong>frames {w.frame_start}–{w.frame_end}</strong></span>
+          <span>Job {w.job_id + 1} · <strong>{unitWord(w.runner, 2)} {w.frame_start}–{w.frame_end}</strong></span>
           <span class="task-pct">{Math.round(w.fraction * 100)}%</span>
         </div>
         <div

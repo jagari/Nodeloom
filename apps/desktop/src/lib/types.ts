@@ -2,7 +2,7 @@
 // serialize as their inner value, enums use the tags shown here.
 
 export type NodeId = string;
-export type RunnerKind = 'fake' | 'blender';
+export type RunnerKind = 'fake' | 'blender' | 'llm';
 export type TaskState = 'pending' | 'running' | 'done' | 'failed';
 
 export interface NodeInfo {
@@ -13,6 +13,8 @@ export interface NodeInfo {
   cpu_cores: number;
   total_memory_bytes: number;
   runners: RunnerKind[];
+  /** Models of the local LLM runner; absent without one. */
+  llm_models?: string[];
 }
 
 export interface Metrics {
@@ -34,7 +36,17 @@ export interface TaskView {
 
 export interface JobView {
   job_id: number;
+  runner: RunnerKind;
   tasks: TaskView[];
+  /** What frames produced so far: an LLM job's answers, by frame. */
+  outputs: OutputView[];
+}
+
+export interface OutputView {
+  frame: number;
+  node: NodeId;
+  prompt: string;
+  text: string;
 }
 
 export interface NodeView {
@@ -70,4 +82,5 @@ export interface ClusterSnapshot {
 
 export type TaskPayload =
   | { runner: 'fake'; frame_start: number; frame_end: number; millis_per_frame: number }
-  | { runner: 'blender'; blend_file: string; frame_start: number; frame_end: number };
+  | { runner: 'blender'; blend_file: string; frame_start: number; frame_end: number }
+  | { runner: 'llm'; model: string; prompts: string[]; frame_start: number; frame_end: number };
