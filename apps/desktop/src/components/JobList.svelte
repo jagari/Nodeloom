@@ -2,6 +2,7 @@
   import { jobSegments, slotColor, summarizeJob } from '../lib/jobs';
   import { unitWord } from '../lib/llm';
   import { movesOfJob, type MoveTracker } from '../lib/moves';
+  import { jobRole } from '../lib/summary';
   import type { ClusterSnapshot, NodeId } from '../lib/types';
   import StatusBadge from './StatusBadge.svelte';
 
@@ -29,13 +30,16 @@
     {@const jobMoves = movesOfJob(moves, job.job_id)}
     {@const justMoved = new Set(jobMoves.filter((m) => m.to).map((m) => m.task_id))}
     {@const machines = new Set(job.tasks.map((t) => t.node).filter(Boolean)).size}
-    {@const units = unitWord(job.runner, 2)}
+    {@const role = jobRole(snapshot.summaries, job)}
+    {@const unit = (n: number) => (role ? role.unit[n === 1 ? 0 : 1] : unitWord(job.runner, n))}
+    {@const units = unit(2)}
     <article class="card job">
       <header>
         <div>
           <strong>Job {job.job_id + 1}</strong>
+          {#if role}<span class="role">{role.label}</span>{/if}
           <span class="muted">
-            · {s.totalFrames} {unitWord(job.runner, s.totalFrames)} in {job.tasks.length} piece{job.tasks.length === 1 ? '' : 's'} on {machines}
+            · {s.totalFrames} {unit(s.totalFrames)} in {job.tasks.length} piece{job.tasks.length === 1 ? '' : 's'} on {machines}
             machine{machines === 1 ? '' : 's'}
           </span>
         </div>
@@ -89,7 +93,7 @@
         {/each}
       </div>
       <div class="axis muted" aria-hidden="true">
-        <span>{unitWord(job.runner, 1)} {layout.first}</span><span>{layout.last}</span>
+        <span>{unit(1)} {layout.first}</span><span>{layout.last}</span>
       </div>
 
       <ul class="pieces">
@@ -153,6 +157,14 @@
     align-items: baseline;
     flex-wrap: wrap;
     gap: 8px;
+  }
+  .role {
+    margin-left: 6px;
+    padding: 1px 8px;
+    border-radius: 10px;
+    background: var(--page);
+    border: 1px solid var(--border);
+    font-size: 13px;
   }
   .head-right {
     display: inline-flex;

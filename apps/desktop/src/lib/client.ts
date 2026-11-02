@@ -1,4 +1,4 @@
-import type { ClusterSnapshot, JobView, NodeId, TaskPayload } from './types';
+import type { ClusterSnapshot, JobView, NodeId, SubmitSummary, SummaryView, TaskPayload } from './types';
 
 const GONE = 'That machine is no longer waiting; it may have disconnected.';
 
@@ -72,6 +72,12 @@ export class ClusterClient {
   async submit(payload: TaskPayload): Promise<JobView> {
     const response = await this.request('POST', '/api/jobs', { payload });
     return (await response.json()) as JobView;
+  }
+
+  /** Summarizes a long text across the machines that have the model. */
+  async summarize(request: SubmitSummary): Promise<SummaryView> {
+    const response = await this.request('POST', '/api/summaries', request);
+    return (await response.json()) as SummaryView;
   }
 
   /** Lets a waiting machine in. */

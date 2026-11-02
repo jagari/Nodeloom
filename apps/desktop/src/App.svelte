@@ -7,7 +7,7 @@
   import { initialConnection } from './lib/launch';
   import { NO_MOVES, trackMoves, type MoveTracker } from './lib/moves';
   import { displayNames } from './lib/names';
-  import type { ClusterSnapshot, NodeId, TaskPayload } from './lib/types';
+  import type { ClusterSnapshot, NodeId, SubmitSummary, TaskPayload } from './lib/types';
   import AddMachine from './components/AddMachine.svelte';
   import ConnectForm from './components/ConnectForm.svelte';
   import JobList from './components/JobList.svelte';
@@ -16,6 +16,7 @@
   import PairedDevices from './components/PairedDevices.svelte';
   import PendingDevices from './components/PendingDevices.svelte';
   import SubmitForm from './components/SubmitForm.svelte';
+  import SummaryPanel from './components/SummaryPanel.svelte';
 
   const EMPTY: ClusterSnapshot = { nodes: [], jobs: [], pending: [], devices: [] };
 
@@ -126,6 +127,7 @@
     return client;
   }
   const submit = (payload: TaskPayload) => connected().submit(payload);
+  const summarize = (request: SubmitSummary) => connected().summarize(request);
   const approve = (key: string) => connected().approve(key);
   const ignore = (key: string) => connected().ignore(key);
   const remove = (id: NodeId) => connected().removeDevice(id);
@@ -186,6 +188,7 @@
       </section>
 
       <SubmitForm nodes={snapshot.nodes} {submit} />
+      <SummaryPanel {snapshot} {summarize} />
       <JobList {snapshot} names={jobNames} {slots} {moves} />
 
       <AddMachine {info} open={snapshot.nodes.length <= 1 && snapshot.pending.length === 0} />

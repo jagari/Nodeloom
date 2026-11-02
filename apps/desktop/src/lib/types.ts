@@ -78,9 +78,50 @@ export interface ClusterSnapshot {
   jobs: JobView[];
   pending: PendingDevice[];
   devices: PairedDevice[];
+  /** Long-document summaries, oldest first. Absent from older masters. */
+  summaries?: SummaryView[];
+}
+
+export type SummaryState = 'running' | 'done' | 'failed';
+
+/**
+ * A long document summarized in rounds: its parts across machines as one
+ * LLM job, then the part summaries combined (in more jobs while long).
+ */
+export interface SummaryView {
+  summary_id: number;
+  title: string;
+  model: string;
+  /** Characters in the document. */
+  chars: number;
+  /** Parts the document was cut into. */
+  parts: number;
+  /** One job per round; the first summarizes the parts. */
+  jobs: number[];
+  state: SummaryState;
+  result: string | null;
+  error: string | null;
+}
+
+/** Body of `POST /api/summaries`. */
+export interface SubmitSummary {
+  model: string;
+  /** Shown in the dashboard and given to the model, e.g. a file name. */
+  title: string;
+  text: string;
 }
 
 export type TaskPayload =
   | { runner: 'fake'; frame_start: number; frame_end: number; millis_per_frame: number }
   | { runner: 'blender'; blend_file: string; frame_start: number; frame_end: number }
-  | { runner: 'llm'; model: string; prompts: string[]; frame_start: number; frame_end: number };
+  | {
+      runner: 'llm';
+      model: string;
+      prompts: string[];
+      frame_start: number;
+      frame_end: number;
+      /** Number of `prompts[0]`; 1 when absent. Pieces carry only their own prompts. */
+      first_prompt?: number;
+      /** Longest answer in tokens; the runner's default when absent. */
+      max_tokens?: number;
+    };
