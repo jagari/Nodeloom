@@ -1,6 +1,6 @@
 # Nodeloom 베타 사용 안내
 
-팀 내부 베타(`v0.1.0-beta.4`)다. 기기 한 대가 클러스터를 운영하고(마스터), 나머지 기기가 거기에 참여한다(에이전트). 변경 내용은 [`CHANGELOG.md`](../CHANGELOG.md)에 있다.
+팀 내부 베타(`v0.1.0-beta.5`)다. 기기 한 대가 클러스터를 운영하고(마스터), 나머지 기기가 거기에 참여한다(에이전트). 변경 내용은 [`CHANGELOG.md`](../CHANGELOG.md)에 있다.
 
 - **PC(맥·윈도우·리눅스)**: 데스크톱 앱을 설치한다. 터미널을 쓰지 않는다.
 - **화면 없는 기기(라즈베리파이·Jetson·서버)**: 명령줄 버전을 설치한다(아래 "명령줄 버전").
@@ -9,15 +9,15 @@
 
 ## 1. 받기
 
-저장소가 비공개라 저장소 접근 권한이 있는 GitHub 계정이 필요하다. 저장소의 Releases에서 `v0.1.0-beta.4`를 열고, 기기에 맞는 파일을 받는다.
+저장소가 비공개라 저장소 접근 권한이 있는 GitHub 계정이 필요하다. 저장소의 Releases에서 `v0.1.0-beta.5`를 열고, 기기에 맞는 파일을 받는다.
 
 | 기기 | 데스크톱 앱 | 명령줄 버전 |
 |---|---|---|
-| macOS (Apple Silicon) | `nodeloom-desktop-0.1.0-beta.4-macos-arm64.dmg` | `nodeloom-0.1.0-beta.4-macos-arm64.tar.gz` |
-| Windows (대부분의 PC) | `nodeloom-desktop-0.1.0-beta.4-windows-x64.exe` | `nodeloom-0.1.0-beta.4-windows-x64.zip` |
-| Windows on ARM (Surface Pro X·Copilot+ PC 등) | `nodeloom-desktop-0.1.0-beta.4-windows-arm64.exe` | `nodeloom-0.1.0-beta.4-windows-arm64.zip` |
-| Linux PC (Ubuntu 22.04 이상, Debian 12 이상) | `nodeloom-desktop-0.1.0-beta.4-linux-x64.deb` | `nodeloom-0.1.0-beta.4-linux-x64.tar.gz` |
-| 라즈베리파이 4·5(64비트 OS), Jetson | (`linux-arm64.deb`, 화면이 있을 때) | `nodeloom-0.1.0-beta.4-linux-arm64.tar.gz` |
+| macOS (Apple Silicon) | `nodeloom-desktop-0.1.0-beta.5-macos-arm64.dmg` | `nodeloom-0.1.0-beta.5-macos-arm64.tar.gz` |
+| Windows (대부분의 PC) | `nodeloom-desktop-0.1.0-beta.5-windows-x64.exe` | `nodeloom-0.1.0-beta.5-windows-x64.zip` |
+| Windows on ARM (Surface Pro X·Copilot+ PC 등) | `nodeloom-desktop-0.1.0-beta.5-windows-arm64.exe` | `nodeloom-0.1.0-beta.5-windows-arm64.zip` |
+| Linux PC (Ubuntu 22.04 이상, Debian 12 이상) | `nodeloom-desktop-0.1.0-beta.5-linux-x64.deb` | `nodeloom-0.1.0-beta.5-linux-x64.tar.gz` |
+| 라즈베리파이 4·5(64비트 OS), Jetson | (`linux-arm64.deb`, 화면이 있을 때) | `nodeloom-0.1.0-beta.5-linux-arm64.tar.gz` |
 
 Intel Mac과 32비트 라즈베리파이 OS용 빌드는 아직 없다.
 
@@ -42,7 +42,7 @@ Intel Mac과 32비트 라즈베리파이 OS용 빌드는 아직 없다.
 **Linux**
 
 ```sh
-sudo apt install ./nodeloom-desktop-0.1.0-beta.4-linux-x64.deb
+sudo apt install ./nodeloom-desktop-0.1.0-beta.5-linux-x64.deb
 ```
 
 앱 목록에서 Nodeloom을 연다. 트레이 아이콘은 Ubuntu 기본 데스크톱에서 보인다. 다른 GNOME 환경은 AppIndicator 확장이 필요할 수 있다.
@@ -53,6 +53,7 @@ sudo apt install ./nodeloom-desktop-0.1.0-beta.4-linux-x64.deb
 
 - **Start a cluster here**: 이 기기가 클러스터를 운영한다. 항상 켜 두기 좋은 기기 **한 대**에서 고른다.
   - 앱 창이 바로 대시보드가 된다. 이 기기도 작업에 참여하며, 승인 없이 자동으로 붙는다.
+  - 대시보드 위쪽 **EN | 한국어**로 언어를 바꿀 수 있다. 고른 언어는 저장된다.
   - 다른 기기(노트북, 휴대폰)의 브라우저에서 볼 주소는 트레이 메뉴 → **Settings**에 나온다.
 - **Join a cluster**: 나머지 기기에서 고른다.
   - 같은 네트워크의 클러스터를 스스로 찾는다. 찾으면 화면에 6자리 확인 코드가 크게 나온다.
@@ -121,8 +122,8 @@ sudo apt install ./nodeloom-desktop-0.1.0-beta.4-linux-x64.deb
 macOS·Linux:
 
 ```sh
-tar -xzf nodeloom-0.1.0-beta.4-<기기>.tar.gz
-cd nodeloom-0.1.0-beta.4-<기기>
+tar -xzf nodeloom-0.1.0-beta.5-<기기>.tar.gz
+cd nodeloom-0.1.0-beta.5-<기기>
 ./install.sh
 ```
 
@@ -132,8 +133,8 @@ cd nodeloom-0.1.0-beta.4-<기기>
 Windows (PowerShell):
 
 ```powershell
-Expand-Archive nodeloom-0.1.0-beta.4-windows-x64.zip
-cd nodeloom-0.1.0-beta.4-windows-x64\nodeloom-0.1.0-beta.4-windows-x64
+Expand-Archive nodeloom-0.1.0-beta.5-windows-x64.zip
+cd nodeloom-0.1.0-beta.5-windows-x64\nodeloom-0.1.0-beta.5-windows-x64
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
