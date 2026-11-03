@@ -200,6 +200,7 @@ master → agent   Rejected { reason }                    기기가 제거되면
   `blender --background --disable-autoexec <작업폴더>/<파일> --render-output <작업폴더>/renders/frame_#### --frame-start N --frame-end M --render-anim`
   표준 출력의 `Saved:` 줄 수로 진행률을 계산한다. 결과물은 각 기기의 `renders/`에 남는다(수집 기능 미구현).
 - `LlmRunner` (`nodeloom-runner-llm`, #52): 그 기기의 Ollama(`127.0.0.1:11434`)를 찾아 모델 목록을 마스터에 알린다(`NodeInfo.llm_models`). 작업은 질문 목록이고 "프레임"은 질문 번호라서 렌더처럼 기기들에 나뉜다. 질문마다 스트리밍 없이, 답 길이를 제한해 묻는다. 답은 `TaskDone` 전에 `AgentMessage::TaskOutput`으로 보낸다.
+  - 찾기 전에 `server::ensure_running`이 Ollama가 답하는지 본다. 답하지 않는데 설치돼 있으면(맥 앱 안, Homebrew, `/usr/local/bin`, 윈도우 `%LOCALAPPDATA%\Programs\Ollama`, `PATH` 순) 셸 없이 `ollama serve`를 `OLLAMA_HOST=127.0.0.1:11434`로 실행하고 최대 20초 기다린다. 프로그램과 인자는 코드에 고정돼 있고 네트워크에서 오는 값은 없다. Nodeloom이 끝나도 남긴다(Ollama 앱의 서버와 같다). `--no-ollama-start`/`NODELOOM_NO_OLLAMA_START`로 끈다.
   - 마스터는 그 모델이 있는 기기에만 조각을 배정한다(없으면 409와 안내). 답은 프레임별로 지금 맡은 기기 것만 보관하고, 조각이 재배정되면 버린다.
   - 각 조각은 자기 몫의 질문만 들고 간다(`first_prompt`가 첫 질문 번호). 답 길이는 작업의 `max_tokens`(없으면 200)이고, 문맥 크기는 늘 8192를 요청한다.
 - 긴 문서 요약(`nodeloom-master/src/summarize.rs`, #53): 새 러너가 아니라 LLM 작업을 이어 붙인다.

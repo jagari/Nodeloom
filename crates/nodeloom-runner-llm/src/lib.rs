@@ -4,6 +4,8 @@
 
 use std::time::Duration;
 
+pub mod server;
+
 use async_trait::async_trait;
 use nodeloom_core::{Runner, RunnerError, validate::validate_model_name};
 use nodeloom_proto::{RunnerKind, TaskPayload};

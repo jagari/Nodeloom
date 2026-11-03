@@ -60,6 +60,10 @@ struct RunArgs {
     /// soon notices a machine that went away.
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u64).range(1..=5))]
     metrics_interval: u64,
+
+    /// Do not start Ollama when it is installed but not running.
+    #[arg(long, env = "NODELOOM_NO_OLLAMA_START")]
+    no_ollama_start: bool,
 }
 
 #[tokio::main]
@@ -143,6 +147,9 @@ async fn run(args: RunArgs, state_dir: PathBuf) -> Result<()> {
         }
         None => warn!("blender not found; this node cannot render blender tasks"),
     }
+    if !args.no_ollama_start {
+        log_ollama_startup(llm_runner::server::ensure_running(llm_runner::DEFAULT_URL).await);
+    }
     match LlmRunner::detect(llm_runner::DEFAULT_URL).await {
         Some(llm) => runners = runners.with(Arc::new(llm)),
         None => info!(
@@ -218,6 +225,19 @@ fn may_resolve_by_multicast(host: &str) -> bool {
         return false;
     }
     name.ends_with(".local") || (!name.contains('.') && name != "localhost")
+}
+
+fn log_ollama_startup(startup: llm_runner::server::Startup) {
+    use llm_runner::server::Startup;
+    match startup {
+        Startup::Started(exe) => info!(
+            "started Ollama ({}); it keeps running after this agent stops",
+            exe.display()
+        ),
+        Startup::AlreadyRunning | Startup::NotInstalled => {}
+        // Already logged; LLM work simply stays off on this machine.
+        Startup::Failed(_) => {}
+    }
 }
 
 #[cfg(test)]
