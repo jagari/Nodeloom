@@ -39,6 +39,29 @@ export interface MasterInfo {
   version: string;
   /** `ip:port` other machines can join at when discovery does not find the master. */
   join_address: string;
+  /** Every address of the master, best link first. Absent from older masters. */
+  addresses?: JoinAddress[];
+}
+
+/** Mirrors `LinkKind` in nodeloom-core's netif.rs. */
+export type LinkKind = 'direct' | 'thunderbolt' | 'wired' | 'other' | 'wifi';
+
+export interface JoinAddress {
+  /** `ip:port`. */
+  address: string;
+  interface: string;
+  kind: LinkKind;
+}
+
+/** The addresses to offer, best link first; the one address an older master gives otherwise. */
+export function joinAddresses(info: MasterInfo): JoinAddress[] {
+  if (info.addresses && info.addresses.length > 0) return info.addresses;
+  return [{ address: info.join_address, interface: '', kind: 'other' }];
+}
+
+/** Whether the master has a cable link (shown with a hint to use it). */
+export function hasCable(addresses: JoinAddress[]): boolean {
+  return addresses.some((a) => a.kind === 'direct' || a.kind === 'thunderbolt');
 }
 
 export interface ClientHandlers {
