@@ -2,6 +2,12 @@
 
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르고, 버전은 [Semantic Versioning](https://semver.org/lang/ko/)을 따른다. 릴리즈 워크플로가 해당 버전 절을 릴리즈 노트로 쓴다.
 
+## [Unreleased]
+
+### 추가
+
+- Nodeloom(앱과 명령줄 에이전트)이 시작할 때 Ollama가 설치돼 있는데 꺼져 있으면 `ollama serve`를 직접 띄운다. 이 기기에서만 들리게(`127.0.0.1:11434`) 띄우고, 이미 켜져 있으면 건드리지 않는다. 끄려면 `--no-ollama-start` 또는 `NODELOOM_NO_OLLAMA_START=1`.
+
 ## [0.1.0-beta.5] - 2026-11-03
 
 대시보드를 한국어로 볼 수 있고, 시연 화면(1280×720) 한 장에 클러스터가 다 보인다. 설치 방법은 `docs/BETA.md`.

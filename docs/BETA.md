@@ -90,7 +90,7 @@ sudo apt install ./nodeloom-desktop-0.1.0-beta.5-linux-x64.deb
 **로컬 AI에 질문 나누기 (Ollama)**
 
 1. 질문을 받을 기기마다 [Ollama](https://ollama.com)를 설치하고 모델을 받는다. 예: `ollama pull llama3.2:1b`. 모든 기기에 같은 모델이 있어야 그 기기들에 나뉜다.
-2. 그 기기의 Nodeloom을 다시 시작한다. Ollama가 답하면 자동으로 켜진다.
+2. 그 기기의 Nodeloom을 다시 시작한다. Ollama가 설치돼 있는데 꺼져 있으면 Nodeloom이 `ollama serve`를 직접 띄운다(이 기기에서만 들리게 `127.0.0.1:11434`로). 이미 켜져 있으면(메뉴 막대의 Ollama 앱 등) 그대로 쓴다. Nodeloom이 띄운 Ollama는 Nodeloom을 꺼도 계속 돈다. 자동으로 띄우지 않으려면 명령줄 에이전트에 `--no-ollama-start`를 주거나, 앱·명령줄 모두 환경 변수 `NODELOOM_NO_OLLAMA_START=1`을 둔다.
 3. 대시보드 **Ask the local AI**에서 모델을 고르고, 질문을 한 줄에 하나씩 쓴 뒤 **Ask the AI**를 누른다.
 4. 답이 도착하는 대로 작업 카드에 질문, 답, 답한 기기가 보인다.
 

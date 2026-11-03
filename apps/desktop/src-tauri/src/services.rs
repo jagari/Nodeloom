@@ -48,6 +48,9 @@ pub struct Options {
     pub port_wait: Duration,
     /// An agent joins this `host:port` instead of looking on the network.
     pub master: Option<String>,
+    /// Start an installed Ollama that is not running. Off with
+    /// `NODELOOM_NO_OLLAMA_START`, as for the command-line agent.
+    pub start_ollama: bool,
 }
 
 impl Options {
@@ -58,6 +61,7 @@ impl Options {
             mdns: true,
             port_wait: Duration::from_secs(5),
             master: None,
+            start_ollama: std::env::var_os("NODELOOM_NO_OLLAMA_START").is_none(),
         })
     }
 }
@@ -100,6 +104,12 @@ pub async fn start(role: Role, options: Options) -> Result<Running> {
     // The test runner only sleeps, so every machine can show work; a
     // machine running a local LLM (Ollama with a model) answers prompts too.
     let mut runners = RunnerSet::new().with(Arc::new(FakeRunner));
+    // Ollama installed but not running (no menu-bar app, nobody typed
+    // `ollama serve`): start it, so the models are there without a terminal.
+    if options.start_ollama {
+        let startup = llm_runner::server::ensure_running(llm_runner::DEFAULT_URL).await;
+        info!("Ollama: {startup:?}");
+    }
     if let Some(llm) = LlmRunner::detect(llm_runner::DEFAULT_URL).await {
         runners = runners.with(Arc::new(llm));
     }
@@ -244,6 +254,8 @@ mod tests {
             mdns: false,
             port_wait: Duration::ZERO,
             master: None,
+            // Tests must not start programs on the machine running them.
+            start_ollama: false,
         }
     }
 
