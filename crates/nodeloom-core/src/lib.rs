@@ -6,6 +6,7 @@ pub mod auth;
 pub mod discovery;
 pub mod identity;
 pub mod metrics;
+pub mod netif;
 pub mod private_file;
 pub mod runner;
 pub mod split;

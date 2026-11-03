@@ -116,6 +116,13 @@ const en = {
   'add.private': 'Private',
   'add.manual': 'On the other computer, choose {enter} and type:',
   'add.cli': 'On a Raspberry Pi, Jetson or server (command line):',
+  'add.cable':
+    'Joined by a cable (a LAN cable straight between the two, a Thunderbolt bridge)? Type the cable’s address so the work goes over the cable.',
+  'link.direct': 'Cable',
+  'link.thunderbolt': 'Thunderbolt',
+  'link.wired': 'Wired',
+  'link.wifi': 'Wi-Fi',
+  'link.other': 'Network',
 
   // Start a job
   'start.title': 'Start a job',
@@ -295,6 +302,13 @@ const ko = {
   'add.private': '개인',
   'add.manual': '다른 컴퓨터에서 {enter} 버튼을 누르고 다음을 입력하세요:',
   'add.cli': '라즈베리 파이, Jetson, 서버(명령줄)에서는:',
+  'add.cable':
+    '케이블로 연결했나요(두 컴퓨터 사이 랜선 직결, 썬더볼트 브리지)? 케이블 쪽 주소를 입력하면 작업이 케이블로 오갑니다.',
+  'link.direct': '케이블',
+  'link.thunderbolt': '썬더볼트',
+  'link.wired': '유선',
+  'link.wifi': 'Wi-Fi',
+  'link.other': '네트워크',
 
   'start.title': '작업 시작',
   'start.noMachine': '먼저 기기를 추가하세요.',

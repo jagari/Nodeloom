@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ClusterClient, parseEndpoint } from './client';
+import { ClusterClient, hasCable, joinAddresses, parseEndpoint, type MasterInfo } from './client';
 
 describe('parseEndpoint', () => {
   it('adds http:// when the scheme is missing', () => {
@@ -89,5 +89,23 @@ describe('ClusterClient requests', () => {
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
       payload: { runner: 'fake', frame_start: 1, frame_end: 2, millis_per_frame: 0 },
     });
+  });
+});
+
+describe('joinAddresses', () => {
+  it('offers every address, or the one an older master gives', () => {
+    const old: MasterInfo = { version: '0.1.0-beta.5', join_address: '192.168.0.12:7878' };
+    expect(joinAddresses(old)).toEqual([{ address: '192.168.0.12:7878', interface: '', kind: 'other' }]);
+    expect(hasCable(joinAddresses(old))).toBe(false);
+
+    const cabled: MasterInfo = {
+      ...old,
+      addresses: [
+        { address: '169.254.10.2:7878', interface: 'bridge0', kind: 'direct' },
+        { address: '192.168.0.12:7878', interface: 'en0', kind: 'other' },
+      ],
+    };
+    expect(joinAddresses(cabled).map((a) => a.address)).toEqual(['169.254.10.2:7878', '192.168.0.12:7878']);
+    expect(hasCable(joinAddresses(cabled))).toBe(true);
   });
 });

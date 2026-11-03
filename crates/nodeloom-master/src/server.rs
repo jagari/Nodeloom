@@ -38,6 +38,7 @@ use axum::{
 };
 use nodeloom_core::{
     identity::{PublicKey, random_hex},
+    netif::{self, LinkKind},
     validate::validate_node_info,
 };
 use nodeloom_proto::{
@@ -137,6 +138,20 @@ pub struct MasterInfo {
     /// `ip:port` other machines can join at, for when discovery does not
     /// find this master (another subnet, a firewall, a guest network).
     pub join_address: String,
+    /// Every address of this machine, best link first, so a machine on a
+    /// cable (a LAN cable straight to it, a Thunderbolt bridge) can be
+    /// given the cable's address. Absent from older masters.
+    #[serde(default)]
+    pub addresses: Vec<JoinAddress>,
+}
+
+/// One address other machines can join at.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JoinAddress {
+    /// `ip:port`.
+    pub address: String,
+    pub interface: String,
+    pub kind: LinkKind,
 }
 
 async fn get_info(
@@ -146,9 +161,23 @@ async fn get_info(
     if !authorized(&cluster, bearer(&headers)) {
         return Err(StatusCode::UNAUTHORIZED);
     }
+    let join_address = join_address(headers.get(HOST).and_then(|h| h.to_str().ok()));
+    let port = join_address
+        .rsplit_once(':')
+        .and_then(|(_, p)| p.parse().ok())
+        .unwrap_or(DEFAULT_PORT);
+    let addresses = netif::local_ipv4()
+        .into_iter()
+        .map(|a| JoinAddress {
+            address: SocketAddr::from((a.ip, port)).to_string(),
+            interface: a.interface,
+            kind: a.kind,
+        })
+        .collect();
     Ok(Json(MasterInfo {
         version: env!("CARGO_PKG_VERSION").to_owned(),
-        join_address: join_address(headers.get(HOST).and_then(|h| h.to_str().ok())),
+        join_address,
+        addresses,
     }))
 }
 

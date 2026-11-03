@@ -972,6 +972,13 @@ async fn info_tells_the_dashboard_where_machines_can_join() {
     let port = h.base.rsplit(':').next().unwrap();
     assert!(info.join_address.ends_with(&format!(":{port}")), "{info:?}");
     assert!(!info.join_address.starts_with("127."), "{info:?}");
+    // Every listed address uses the same port; loopback is never offered.
+    assert!(
+        info.addresses
+            .iter()
+            .all(|a| a.address.ends_with(&format!(":{port}")) && !a.address.starts_with("127.")),
+        "{info:?}"
+    );
     assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
 }
 

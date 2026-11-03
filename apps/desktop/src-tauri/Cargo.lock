@@ -2509,6 +2509,7 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.4.3",
  "hex",
+ "if-addrs",
  "mdns-sd",
  "nodeloom-proto",
  "serde",

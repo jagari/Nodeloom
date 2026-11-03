@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { MasterInfo } from '../lib/client';
+  import { hasCable, joinAddresses, type LinkKind, type MasterInfo } from '../lib/client';
   import { t } from '../lib/locale.svelte';
   import Rich from './Rich.svelte';
 
@@ -23,6 +23,16 @@
       copied = '';
     }
   }
+
+  const addresses = $derived(info ? joinAddresses(info) : []);
+  const cable = $derived(hasCable(addresses));
+  const linkKey = {
+    direct: 'link.direct',
+    thunderbolt: 'link.thunderbolt',
+    wired: 'link.wired',
+    wifi: 'link.wifi',
+    other: 'link.other',
+  } as const satisfies Record<LinkKind, string>;
 
   const command = $derived(info ? `nodeloom-agent --master ${info.join_address} --enable-fake-runner` : '');
 </script>
@@ -53,12 +63,19 @@
       <li>
         <div class="manual">
           <span><Rich text={t('add.manual')}>{#snippet enter()}<strong>Enter the address</strong>{/snippet}</Rich></span>
-          <span class="copyable">
-            <code>{info.join_address}</code>
-            <button class="btn small" type="button" onclick={() => copy(info.join_address)}>
-              {copied === info.join_address ? t('common.copied') : t('common.copy')}
-            </button>
-          </span>
+          {#if cable}<span class="hint">{t('add.cable')}</span>{/if}
+          <!-- Best link first; the kind is a word, not a colour. -->
+          <ul class="addresses">
+            {#each addresses as a (a.address + a.interface)}
+              <li class="copyable">
+                <span class="kind">{t(linkKey[a.kind])}{#if a.interface}<span class="muted"> · {a.interface}</span>{/if}</span>
+                <code>{a.address}</code>
+                <button class="btn small" type="button" onclick={() => copy(a.address)}>
+                  {copied === a.address ? t('common.copied') : t('common.copy')}
+                </button>
+              </li>
+            {/each}
+          </ul>
         </div>
       </li>
       <li>
@@ -108,6 +125,20 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+  }
+  .addresses {
+    list-style: none;
+    padding-left: 0;
+    margin: 4px 0 0;
+    gap: 4px;
+  }
+  .kind {
+    min-width: 9em;
+    font-size: 13px;
+  }
+  .hint {
+    font-size: 13px;
+    color: var(--ink-2);
   }
   .copyable {
     display: flex;
